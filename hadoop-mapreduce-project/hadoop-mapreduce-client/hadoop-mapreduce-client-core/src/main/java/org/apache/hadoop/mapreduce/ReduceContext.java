@@ -36,7 +36,10 @@ import org.apache.hadoop.classification.InterfaceStability;
 public interface ReduceContext<KEYIN,VALUEIN,KEYOUT,VALUEOUT>
     extends TaskInputOutputContext<KEYIN,VALUEIN,KEYOUT,VALUEOUT> {
 
-  /** Start processing next unique key. */
+  /**
+   * Start processing next unique key.
+   * @return true if there was a key to process, false otherwise
+   */
   public boolean nextKey() throws IOException,InterruptedException;
 
   /**
@@ -44,6 +47,8 @@ public interface ReduceContext<KEYIN,VALUEIN,KEYOUT,VALUEOUT>
    * object, which is stored in the context.
    * @return the series of values associated with the current key. All of the 
    * objects returned directly and indirectly from this method are reused.
+   * @throws java.io.IOException
+   * @throws java.lang.InterruptedException
    */
   public Iterable<VALUEIN> getValues() throws IOException, InterruptedException;
 
