@@ -170,9 +170,9 @@ public class DFSUtil {
   }
 
   /**
-   * Compartor for sorting DataNodeInfo[] based on decommissioned states.
+   * Comparator for sorting DataNodeInfo[] based on decommissioned states.
    * Decommissioned nodes are moved to the end of the array on sorting with
-   * this compartor.
+   * this comparator.
    */
   public static final Comparator<DatanodeInfo> DECOM_COMPARATOR = 
     new Comparator<DatanodeInfo>() {

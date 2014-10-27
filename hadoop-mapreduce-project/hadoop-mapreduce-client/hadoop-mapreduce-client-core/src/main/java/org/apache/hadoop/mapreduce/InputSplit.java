@@ -54,7 +54,7 @@ public abstract class InputSplit {
    * Get the list of nodes by name where the data for the split would be local.
    * The locations do not need to be serialized.
    * 
-   * @return a new array of the node nodes.
+   * @return a new array of the node names.
    * @throws IOException
    * @throws InterruptedException
    */
