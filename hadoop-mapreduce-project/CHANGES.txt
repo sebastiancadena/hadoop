@@ -224,6 +224,18 @@ Trunk (Unreleased)
 
     MAPREDUCE-6078. native-task: fix gtest build on macosx (Binglin Chang)
 
+Release 2.7.0 - UNRELEASED
+
+  INCOMPATIBLE CHANGES
+
+  NEW FEATURES
+
+  IMPROVEMENTS
+
+  OPTIMIZATIONS
+
+  BUG FIXES
+
 Release 2.6.0 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -259,6 +271,11 @@ Release 2.6.0 - UNRELEASED
     MAPREDUCE-5279. Made MR headroom calculation honor cpu dimension when YARN
     scheduler resource type is memory plus cpu. (Peng Zhang and Varun Vasudev
     via zjshen)
+
+    MAPREDUCE-6072. Remove INSTALL document (Akira AJISAKA via aw)
+
+    MAPREDUCE-5970. Provide a boolean switch to enable MR-AM profiling (Gera
+    Shegalov via jlowe)
 
   OPTIMIZATIONS
 
@@ -371,6 +388,58 @@ Release 2.6.0 - UNRELEASED
 
     MAPREDUCE-6104. TestJobHistoryParsing.testPartialJob fails in branch-2
     (Mit Desai via jlowe)
+
+    MAPREDUCE-6109. Fix minor typo in distcp -p usage text (Charles Lamb 
+    via aw)
+
+    MAPREDUCE-6093. minor distcp doc edits (Charles Lamb via aw)
+
+    MAPREDUCE-5831. Make MR client ignore unknown counters received from AM.
+    (Junping Du via zjshen)
+
+    MAPREDUCE-6073. Description of mapreduce.job.speculative.slowtaskthreshold 
+    in mapred-default should be moved into description tags (Tsuyoshi OZAWA 
+    via aw)
+
+    MAPREDUCE-5796. Use current version of the archive name in 
+    DistributedCacheDeploy document (Akira AJISAKA via aw)
+
+    MAPREDUCE-5945. Update the description of GenericOptionsParser -jt 
+    option (Akira AJISAKA via aw)
+
+    MAPREDUCE-6087. Fixed wrong config name of
+    MRJobConfig#MR_CLIENT_TO_AM_IPC_MAX_RETRIES_ON_TIMEOUTS. Contributed by
+    Akira AJISAKA. (Akira AJISAKA via jianhe)
+
+    MAPREDUCE-6094. TestMRCJCFileInputFormat.testAddInputPath() fails on trunk
+    (Akira AJISAKA via jlowe)
+
+    MAPREDUCE-6029. TestCommitterEventHandler fails in trunk (Mit Desai via
+    jlowe)
+
+    MAPREDUCE-6122. TestLineRecordReader may fail due to test data files checked
+    out of git with incorrect line endings. (cnauroth)
+
+    MAPREDUCE-6123. TestCombineFileInputFormat incorrectly starts 2
+    MiniDFSCluster instances. (cnauroth)
+
+    MAPREDUCE-5875. Make Counter limits consistent across JobClient, 
+    MRAppMaster, and YarnChild. (Gera Shegalov via kasha)
+
+    MAPREDUCE-6125. TestContainerLauncherImpl sometimes fails (Mit Desai via
+    jlowe)
+
+    MAPREDUCE-6115. TestPipeApplication#testSubmitter fails in trunk (Binglin
+    Chang via jlowe)
+
+    MAPREDUCE-5873. Shuffle bandwidth computation includes time spent waiting
+    for maps (Siqi Li via jlowe)
+
+    MAPREDUCE-5542. Killing a job just as it finishes can generate an NPE in
+    client (Rohith via jlowe)
+
+    MAPREDUCE-6126. Fixed Rumen JobBuilder to ignore NormalizedResourceEvent.
+    (Junping Du via jianhe)
 
 Release 2.5.1 - 2014-09-05
 

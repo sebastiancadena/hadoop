@@ -402,6 +402,10 @@ public class BlockManager {
     return storagePolicySuite.getPolicy(policyName);
   }
 
+  public BlockStoragePolicy getStoragePolicy(final byte policyId) {
+    return storagePolicySuite.getPolicy(policyId);
+  }
+
   public BlockStoragePolicy[] getStoragePolicies() {
     return storagePolicySuite.getAllPolicies();
   }
@@ -1058,6 +1062,19 @@ public class BlockManager {
     }
   }
 
+  /** Remove the blocks associated to the given DatanodeStorageInfo. */
+  void removeBlocksAssociatedTo(final DatanodeStorageInfo storageInfo) {
+    assert namesystem.hasWriteLock();
+    final Iterator<? extends Block> it = storageInfo.getBlockIterator();
+    DatanodeDescriptor node = storageInfo.getDatanodeDescriptor();
+    while(it.hasNext()) {
+      Block block = it.next();
+      removeStoredBlock(block, node);
+      invalidateBlocks.remove(node, block);
+    }
+    namesystem.checkSafeMode();
+  }
+
   /**
    * Adds block to list of blocks which will be invalidated on specified
    * datanode and log the operation
@@ -1489,7 +1506,7 @@ public class BlockManager {
   /** Choose target for getting additional datanodes for an existing pipeline. */
   public DatanodeStorageInfo[] chooseTarget4AdditionalDatanode(String src,
       int numAdditionalNodes,
-      DatanodeDescriptor clientnode,
+      Node clientnode,
       List<DatanodeStorageInfo> chosen,
       Set<Node> excludes,
       long blocksize,
@@ -1509,7 +1526,7 @@ public class BlockManager {
    *      Set, long, List, BlockStoragePolicy)
    */
   public DatanodeStorageInfo[] chooseTarget4NewBlock(final String src,
-      final int numOfReplicas, final DatanodeDescriptor client,
+      final int numOfReplicas, final Node client,
       final Set<Node> excludedNodes,
       final long blocksize,
       final List<String> favoredNodes,
@@ -2103,8 +2120,8 @@ public class BlockManager {
     // Add replica if appropriate. If the replica was previously corrupt
     // but now okay, it might need to be updated.
     if (reportedState == ReplicaState.FINALIZED
-        && (!storedBlock.findDatanode(dn)
-        || corruptReplicas.isReplicaCorrupt(storedBlock, dn))) {
+        && (storedBlock.findStorageInfo(storageInfo) == -1 ||
+            corruptReplicas.isReplicaCorrupt(storedBlock, dn))) {
       toAdd.add(storedBlock);
     }
     return storedBlock;
@@ -3421,6 +3438,11 @@ public class BlockManager {
     return this.neededReplications.getCorruptBlockSize();
   }
 
+  public long getMissingReplOneBlocksCount() {
+    // not locking
+    return this.neededReplications.getCorruptReplOneBlockSize();
+  }
+
   public BlockInfo addBlockCollection(BlockInfo block, BlockCollection bc) {
     return blocksMap.addBlockCollection(block, bc);
   }
@@ -3595,6 +3617,7 @@ public class BlockManager {
       this.block = block;
       this.bc = bc;
       this.srcNode = srcNode;
+      this.srcNode.incrementPendingReplicationWithoutTargets();
       this.containingNodes = containingNodes;
       this.liveReplicaStorages = liveReplicaStorages;
       this.additionalReplRequired = additionalReplRequired;
@@ -3605,10 +3628,14 @@ public class BlockManager {
     private void chooseTargets(BlockPlacementPolicy blockplacement,
         BlockStoragePolicySuite storagePolicySuite,
         Set<Node> excludedNodes) {
-      targets = blockplacement.chooseTarget(bc.getName(),
-          additionalReplRequired, srcNode, liveReplicaStorages, false,
-          excludedNodes, block.getNumBytes(),
-          storagePolicySuite.getPolicy(bc.getStoragePolicyID()));
+      try {
+        targets = blockplacement.chooseTarget(bc.getName(),
+            additionalReplRequired, srcNode, liveReplicaStorages, false,
+            excludedNodes, block.getNumBytes(),
+            storagePolicySuite.getPolicy(bc.getStoragePolicyID()));
+      } finally {
+        srcNode.decrementPendingReplicationWithoutTargets();
+      }
     }
   }
 

@@ -148,7 +148,6 @@ public class TestAggregatedLogsBlock {
   }
   /**
    * Log files was deleted.
-   * 
    * @throws Exception
    */
   @Test

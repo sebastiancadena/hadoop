@@ -211,6 +211,7 @@ class DataXceiver extends Receiver implements Runnable {
               LOG.debug("Cached " + peer + " closing after " + opsProcessed + " ops");
             }
           } else {
+            datanode.metrics.incrDatanodeNetworkErrors();
             throw err;
           }
           break;
@@ -500,6 +501,7 @@ class DataXceiver extends Receiver implements Runnable {
         } catch (IOException ioe) {
           LOG.debug("Error reading client status response. Will close connection.", ioe);
           IOUtils.closeStream(out);
+          datanode.metrics.incrDatanodeNetworkErrors();
         }
       } else {
         IOUtils.closeStream(out);
@@ -520,6 +522,7 @@ class DataXceiver extends Receiver implements Runnable {
        */
       LOG.warn(dnR + ":Got exception while serving " + block + " to "
           + remoteAddress, ioe);
+      datanode.metrics.incrDatanodeNetworkErrors();
       throw ioe;
     } finally {
       IOUtils.closeStream(blockSender);
@@ -544,7 +547,8 @@ class DataXceiver extends Receiver implements Runnable {
       final long maxBytesRcvd,
       final long latestGenerationStamp,
       DataChecksum requestedChecksum,
-      CachingStrategy cachingStrategy) throws IOException {
+      CachingStrategy cachingStrategy,
+      final boolean allowLazyPersist) throws IOException {
     previousOpClientName = clientname;
     updateCurrentThreadName("Receiving block " + block);
     final boolean isDatanode = clientname.length() == 0;
@@ -606,8 +610,8 @@ class DataXceiver extends Receiver implements Runnable {
             peer.getLocalAddressString(),
             stage, latestGenerationStamp, minBytesRcvd, maxBytesRcvd,
             clientname, srcDataNode, datanode, requestedChecksum,
-            cachingStrategy);
-        
+            cachingStrategy, allowLazyPersist);
+
         storageUuid = blockReceiver.getStorageUuid();
       } else {
         storageUuid = datanode.data.recoverClose(
@@ -648,12 +652,15 @@ class DataXceiver extends Receiver implements Runnable {
               HdfsConstants.SMALL_BUFFER_SIZE));
           mirrorIn = new DataInputStream(unbufMirrorIn);
 
+          // Do not propagate allowLazyPersist to downstream DataNodes.
           new Sender(mirrorOut).writeBlock(originalBlock, targetStorageTypes[0],
               blockToken, clientname, targets, targetStorageTypes, srcDataNode,
               stage, pipelineSize, minBytesRcvd, maxBytesRcvd,
-              latestGenerationStamp, requestedChecksum, cachingStrategy);
+              latestGenerationStamp, requestedChecksum, cachingStrategy, false);
 
           mirrorOut.flush();
+
+          DataNodeFaultInjector.get().writeBlockAfterFlush();
 
           // read connect ack (only for clients, not for replication req)
           if (isClient) {
@@ -693,6 +700,7 @@ class DataXceiver extends Receiver implements Runnable {
             LOG.info(datanode + ":Exception transfering " +
                      block + " to mirror " + mirrorNode +
                      "- continuing without the mirror", e);
+            datanode.metrics.incrDatanodeNetworkErrors();
           }
         }
       }
@@ -747,6 +755,7 @@ class DataXceiver extends Receiver implements Runnable {
       
     } catch (IOException ioe) {
       LOG.info("opWriteBlock " + block + " received exception " + ioe);
+      datanode.metrics.incrDatanodeNetworkErrors();
       throw ioe;
     } finally {
       // close all opened streams
@@ -780,6 +789,10 @@ class DataXceiver extends Receiver implements Runnable {
       datanode.transferReplicaForPipelineRecovery(blk, targets,
           targetStorageTypes, clientName);
       writeResponse(Status.SUCCESS, null, out);
+    } catch (IOException ioe) {
+      LOG.info("transferBlock " + blk + " received exception " + ioe);
+      datanode.metrics.incrDatanodeNetworkErrors();
+      throw ioe;
     } finally {
       IOUtils.closeStream(out);
     }
@@ -871,6 +884,10 @@ class DataXceiver extends Receiver implements Runnable {
         .build()
         .writeDelimitedTo(out);
       out.flush();
+    } catch (IOException ioe) {
+      LOG.info("blockChecksum " + block + " received exception " + ioe);
+      datanode.metrics.incrDatanodeNetworkErrors();
+      throw ioe;
     } finally {
       IOUtils.closeStream(out);
       IOUtils.closeStream(checksumIn);
@@ -936,6 +953,7 @@ class DataXceiver extends Receiver implements Runnable {
     } catch (IOException ioe) {
       isOpSuccess = false;
       LOG.info("opCopyBlock " + block + " received exception " + ioe);
+      datanode.metrics.incrDatanodeNetworkErrors();
       throw ioe;
     } finally {
       dataXceiverServer.balanceThrottler.release();
@@ -993,6 +1011,7 @@ class DataXceiver extends Receiver implements Runnable {
     BlockReceiver blockReceiver = null;
     DataInputStream proxyReply = null;
     DataOutputStream replyOut = new DataOutputStream(getOutputStream());
+    boolean IoeDuringCopyBlockOperation = false;
     try {
       // get the output stream to the proxy
       final String dnAddr = proxySource.getXferAddr(connectToDnViaHostname);
@@ -1020,7 +1039,9 @@ class DataXceiver extends Receiver implements Runnable {
           HdfsConstants.IO_FILE_BUFFER_SIZE));
 
       /* send request to the proxy */
+      IoeDuringCopyBlockOperation = true;
       new Sender(proxyOut).copyBlock(block, blockToken);
+      IoeDuringCopyBlockOperation = false;
 
       // receive the response from the proxy
       
@@ -1046,7 +1067,7 @@ class DataXceiver extends Receiver implements Runnable {
           proxyReply, proxySock.getRemoteSocketAddress().toString(),
           proxySock.getLocalSocketAddress().toString(),
           null, 0, 0, 0, "", null, datanode, remoteChecksum,
-          CachingStrategy.newDropBehind());
+          CachingStrategy.newDropBehind(), false);
 
       // receive a block
       blockReceiver.receiveBlock(null, null, replyOut, null, 
@@ -1063,6 +1084,10 @@ class DataXceiver extends Receiver implements Runnable {
       opStatus = ERROR;
       errMsg = "opReplaceBlock " + block + " received exception " + ioe; 
       LOG.info(errMsg);
+      if (!IoeDuringCopyBlockOperation) {
+        // Don't double count IO errors
+        datanode.metrics.incrDatanodeNetworkErrors();
+      }
       throw ioe;
     } finally {
       // receive the last byte that indicates the proxy released its thread resource
@@ -1081,6 +1106,7 @@ class DataXceiver extends Receiver implements Runnable {
         sendResponse(opStatus, errMsg);
       } catch (IOException ioe) {
         LOG.warn("Error writing reply back to " + peer.getRemoteAddressString());
+        datanode.metrics.incrDatanodeNetworkErrors();
       }
       IOUtils.closeStream(proxyOut);
       IOUtils.closeStream(blockReceiver);

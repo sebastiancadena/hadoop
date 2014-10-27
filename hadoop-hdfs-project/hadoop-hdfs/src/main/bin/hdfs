@@ -49,6 +49,7 @@ function hadoop_usage
   echo "  snapshotDiff         diff two snapshots of a directory or diff the"
   echo "                       current directory contents with a snapshot"
   echo "  storagepolicies      get all the existing block storage policies"
+  echo "  version              print the version"
   echo "  zkfc                 run the ZK Failover Controller daemon"
   echo ""
   echo "Most commands print help when invoked w/o parameters."
@@ -82,6 +83,7 @@ shift
 
 case ${COMMAND} in
   balancer)
+    daemon="true"
     CLASS=org.apache.hadoop.hdfs.server.balancer.Balancer
     hadoop_debug "Appending HADOOP_BALANCER_OPTS onto HADOOP_OPTS"
     HADOOP_OPTS="${HADOOP_OPTS} ${HADOOP_BALANCER_OPTS}"
@@ -163,6 +165,7 @@ case ${COMMAND} in
     CLASS=org.apache.hadoop.hdfs.tools.snapshot.LsSnapshottableDir
   ;;
   mover)
+    daemon="true"
     CLASS=org.apache.hadoop.hdfs.server.mover.Mover
     hadoop_debug "Appending HADOOP_MOVER_OPTS onto HADOOP_OPTS"
     HADOOP_OPTS="${HADOOP_OPTS} ${HADOOP_MOVER_OPTS}"
@@ -219,6 +222,9 @@ case ${COMMAND} in
   ;;
   storagepolicies)
     CLASS=org.apache.hadoop.hdfs.tools.GetStoragePolicies
+  ;;
+  version)
+    CLASS=org.apache.hadoop.util.VersionInfo
   ;;
   zkfc)
     daemon="true"

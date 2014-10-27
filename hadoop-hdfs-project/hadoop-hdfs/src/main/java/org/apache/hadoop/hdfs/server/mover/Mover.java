@@ -69,7 +69,7 @@ public class Mover {
         = new EnumMap<StorageType, List<StorageGroup>>(StorageType.class);
     
     private StorageMap() {
-      for(StorageType t : StorageType.asList()) {
+      for(StorageType t : StorageType.getMovableTypes()) {
         targetStorageTypeMap.put(t, new LinkedList<StorageGroup>());
       }
     }
@@ -130,7 +130,7 @@ public class Mover {
     final List<DatanodeStorageReport> reports = dispatcher.init();
     for(DatanodeStorageReport r : reports) {
       final DDatanode dn = dispatcher.newDatanode(r.getDatanodeInfo());
-      for(StorageType t : StorageType.asList()) {
+      for(StorageType t : StorageType.getMovableTypes()) {
         final Source source = dn.addSource(t, Long.MAX_VALUE, dispatcher);
         final long maxRemaining = getMaxRemaining(r, t);
         final StorageGroup target = maxRemaining > 0L ? dn.addTarget(t,
@@ -252,14 +252,9 @@ public class Mover {
      */
     private boolean processNamespace() {
       getSnapshottableDirs();
-      boolean hasRemaining = true;
-      try {
-        for (Path target : targetPaths) {
-          hasRemaining = processDirRecursively("", dfs.getFileInfo(target
-              .toUri().getPath()));
-        }
-      } catch (IOException e) {
-        LOG.warn("Failed to get root directory status. Ignore and continue.", e);
+      boolean hasRemaining = false;
+      for (Path target : targetPaths) {
+        hasRemaining |= processPath(target.toUri().getPath());
       }
       // wait for pending move to finish and retry the failed migration
       hasRemaining |= Dispatcher.waitForMoveCompletion(storages.targets.values());
@@ -270,7 +265,7 @@ public class Mover {
      * @return whether there is still remaing migration work for the next
      *         round
      */
-    private boolean processChildrenList(String fullPath) {
+    private boolean processPath(String fullPath) {
       boolean hasRemaining = false;
       for (byte[] lastReturnedName = HdfsFileStatus.EMPTY_NAME;;) {
         final DirectoryListing children;
@@ -285,7 +280,7 @@ public class Mover {
           return hasRemaining;
         }
         for (HdfsFileStatus child : children.getPartialListing()) {
-          hasRemaining |= processDirRecursively(fullPath, child);
+          hasRemaining |= processRecursively(fullPath, child);
         }
         if (children.hasMore()) {
           lastReturnedName = children.getLastName();
@@ -296,8 +291,7 @@ public class Mover {
     }
 
     /** @return whether the migration requires next round */
-    private boolean processDirRecursively(String parent,
-                                          HdfsFileStatus status) {
+    private boolean processRecursively(String parent, HdfsFileStatus status) {
       String fullPath = status.getFullName(parent);
       boolean hasRemaining = false;
       if (status.isDir()) {
@@ -305,11 +299,11 @@ public class Mover {
           fullPath = fullPath + Path.SEPARATOR;
         }
 
-        hasRemaining = processChildrenList(fullPath);
+        hasRemaining = processPath(fullPath);
         // process snapshots if this is a snapshottable directory
         if (snapshottableDirs.contains(fullPath)) {
           final String dirSnapshot = fullPath + HdfsConstants.DOT_SNAPSHOT_DIR;
-          hasRemaining |= processChildrenList(dirSnapshot);
+          hasRemaining |= processPath(dirSnapshot);
         }
       } else if (!status.isSymlink()) { // file
         try {
@@ -354,7 +348,7 @@ public class Mover {
         LocatedBlock lb = lbs.get(i);
         final StorageTypeDiff diff = new StorageTypeDiff(types,
             lb.getStorageTypes());
-        if (!diff.removeOverlap()) {
+        if (!diff.removeOverlap(true)) {
           if (scheduleMoves4Block(diff, lb)) {
             hasRemaining |= (diff.existing.size() > 1 &&
                 diff.expected.size() > 1);
@@ -458,22 +452,38 @@ public class Mover {
       this.expected = new LinkedList<StorageType>(expected);
       this.existing = new LinkedList<StorageType>(Arrays.asList(existing));
     }
-    
+
     /**
      * Remove the overlap between the expected types and the existing types.
-     * @return if the existing types or the expected types is empty after
+     * @param  ignoreNonMovable ignore non-movable storage types
+     *         by removing them from both expected and existing storage type list
+     *         to prevent non-movable storage from being moved.
+     * @returns if the existing types or the expected types is empty after
      *         removing the overlap.
      */
-    boolean removeOverlap() { 
+    boolean removeOverlap(boolean ignoreNonMovable) {
       for(Iterator<StorageType> i = existing.iterator(); i.hasNext(); ) {
         final StorageType t = i.next();
         if (expected.remove(t)) {
           i.remove();
         }
       }
+      if (ignoreNonMovable) {
+        removeNonMovable(existing);
+        removeNonMovable(expected);
+      }
       return expected.isEmpty() || existing.isEmpty();
     }
-    
+
+    void removeNonMovable(List<StorageType> types) {
+      for (Iterator<StorageType> i = types.iterator(); i.hasNext(); ) {
+        final StorageType t = i.next();
+        if (!t.isMovable()) {
+          i.remove();
+        }
+      }
+    }
+
     @Override
     public String toString() {
       return getClass().getSimpleName() + "{expected=" + expected

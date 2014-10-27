@@ -38,6 +38,7 @@ import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.CipherSuite;
+import org.apache.hadoop.crypto.CryptoProtocolVersion;
 import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileEncryptionInfo;
@@ -59,6 +60,7 @@ import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.AclException;
 import org.apache.hadoop.hdfs.protocol.Block;
+import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.DirectoryListing;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
@@ -277,8 +279,16 @@ public class FSDirectory implements Closeable {
 
   private static INodeFile newINodeFile(long id, PermissionStatus permissions,
       long mtime, long atime, short replication, long preferredBlockSize) {
+    return newINodeFile(id, permissions, mtime, atime, replication, preferredBlockSize,
+        (byte)0);
+  }
+
+  private static INodeFile newINodeFile(long id, PermissionStatus permissions,
+      long mtime, long atime, short replication, long preferredBlockSize,
+      byte storagePolicyId) {
     return new INodeFile(id, null, permissions, mtime, atime,
-        BlockInfo.EMPTY_ARRAY, replication, preferredBlockSize, (byte)0);
+        BlockInfo.EMPTY_ARRAY, replication, preferredBlockSize,
+        storagePolicyId);
   }
 
   /**
@@ -328,17 +338,18 @@ public class FSDirectory implements Closeable {
                             long preferredBlockSize,
                             boolean underConstruction,
                             String clientName,
-                            String clientMachine) {
+                            String clientMachine,
+                            byte storagePolicyId) {
     final INodeFile newNode;
     assert hasWriteLock();
     if (underConstruction) {
       newNode = newINodeFile(id, permissions, modificationTime,
-          modificationTime, replication, preferredBlockSize);
+          modificationTime, replication, preferredBlockSize, storagePolicyId);
       newNode.toUnderConstruction(clientName, clientMachine);
 
     } else {
       newNode = newINodeFile(id, permissions, modificationTime, atime,
-          replication, preferredBlockSize);
+          replication, preferredBlockSize, storagePolicyId);
     }
 
     try {
@@ -1026,6 +1037,20 @@ public class FSDirectory implements Closeable {
     }
     final int snapshotId = iip.getLatestSnapshotId();
     if (inode.isFile()) {
+      BlockStoragePolicy newPolicy = getBlockManager().getStoragePolicy(policyId);
+      if (newPolicy.isCopyOnCreateFile()) {
+        throw new HadoopIllegalArgumentException(
+            "Policy " + newPolicy + " cannot be set after file creation.");
+      }
+
+      BlockStoragePolicy currentPolicy =
+          getBlockManager().getStoragePolicy(inode.getLocalStoragePolicyID());
+
+      if (currentPolicy != null && currentPolicy.isCopyOnCreateFile()) {
+        throw new HadoopIllegalArgumentException(
+            "Existing policy " + currentPolicy.getName() +
+                " cannot be changed after file creation.");
+      }
       inode.asFile().setStoragePolicyID(policyId, snapshotId);
     } else if (inode.isDirectory()) {
       setDirStoragePolicy(inode.asDirectory(), policyId, snapshotId);  
@@ -2175,6 +2200,7 @@ public class FSDirectory implements Closeable {
                         xattr.getValue());
                 ezManager.unprotectedAddEncryptionZone(inode.getId(),
                     PBHelper.convert(ezProto.getSuite()),
+                    PBHelper.convert(ezProto.getCryptoProtocolVersion()),
                     ezProto.getKeyName());
               } catch (InvalidProtocolBufferException e) {
                 NameNode.LOG.warn("Error parsing protocol buffer of " +
@@ -2766,11 +2792,12 @@ public class FSDirectory implements Closeable {
     }
   }
 
-  XAttr createEncryptionZone(String src, CipherSuite suite, String keyName)
+  XAttr createEncryptionZone(String src, CipherSuite suite,
+      CryptoProtocolVersion version, String keyName)
     throws IOException {
     writeLock();
     try {
-      return ezManager.createEncryptionZone(src, suite, keyName);
+      return ezManager.createEncryptionZone(src, suite, version, keyName);
     } finally {
       writeUnlock();
     }
@@ -2842,8 +2869,7 @@ public class FSDirectory implements Closeable {
         iip = getINodesInPath(inode.getFullPathName(), true);
       }
       EncryptionZone encryptionZone = getEZForPath(iip);
-      if (encryptionZone == null ||
-          encryptionZone.equals(EncryptionZoneManager.NULL_EZ)) {
+      if (encryptionZone == null) {
         // not an encrypted file
         return null;
       } else if(encryptionZone.getPath() == null
@@ -2854,8 +2880,9 @@ public class FSDirectory implements Closeable {
         }
       }
 
-      CipherSuite suite = encryptionZone.getSuite();
-      String keyName = encryptionZone.getKeyName();
+      final CryptoProtocolVersion version = encryptionZone.getVersion();
+      final CipherSuite suite = encryptionZone.getSuite();
+      final String keyName = encryptionZone.getKeyName();
 
       XAttr fileXAttr = unprotectedGetXAttrByName(inode, snapshotId,
           CRYPTO_XATTR_FILE_ENCRYPTION_INFO);
@@ -2871,7 +2898,7 @@ public class FSDirectory implements Closeable {
         HdfsProtos.PerFileEncryptionInfoProto fileProto =
             HdfsProtos.PerFileEncryptionInfoProto.parseFrom(
                 fileXAttr.getValue());
-        return PBHelper.convert(fileProto, suite, keyName);
+        return PBHelper.convert(fileProto, suite, version, keyName);
       } catch (InvalidProtocolBufferException e) {
         throw new IOException("Could not parse file encryption info for " +
             "inode " + inode, e);
@@ -2914,6 +2941,7 @@ public class FSDirectory implements Closeable {
             HdfsProtos.ZoneEncryptionInfoProto.parseFrom(xattr.getValue());
         ezManager.addEncryptionZone(inode.getId(),
             PBHelper.convert(ezProto.getSuite()),
+            PBHelper.convert(ezProto.getCryptoProtocolVersion()),
             ezProto.getKeyName());
       }
 

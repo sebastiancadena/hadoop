@@ -29,14 +29,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.ReconfigurationTaskStatus;
+import org.apache.hadoop.conf.ReconfigurationUtil.PropertyChange;
 import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FsShell;
@@ -44,6 +51,7 @@ import org.apache.hadoop.fs.FsStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.shell.Command;
 import org.apache.hadoop.fs.shell.CommandFormat;
+import org.apache.hadoop.hdfs.client.BlockReportOptions;
 import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
@@ -378,6 +386,7 @@ public class DFSAdmin extends FsShell {
     "\t[-refreshSuperUserGroupsConfiguration]\n" +
     "\t[-refreshCallQueue]\n" +
     "\t[-refresh <host:ipc_port> <key> [arg1..argn]\n" +
+    "\t[-reconfig <datanode|...> <host:ipc_port> <start|status>]\n" +
     "\t[-printTopology]\n" +
     "\t[-refreshNamenodes datanode_host:ipc_port]\n"+
     "\t[-deleteBlockPool datanode_host:ipc_port blockpoolId [force]]\n"+
@@ -390,6 +399,7 @@ public class DFSAdmin extends FsShell {
     "\t[-metasave filename]\n" +
     "\t[-setStoragePolicy path policyName]\n" +
     "\t[-getStoragePolicy path]\n" +
+    "\t[-triggerBlockReport [-incremental] <datanode_host:ipc_port>]\n" +
     "\t[-help [cmd]]\n";
 
   /**
@@ -452,6 +462,8 @@ public class DFSAdmin extends FsShell {
                        dfs.getCorruptBlocksCount());
     System.out.println("Missing blocks: " + 
                        dfs.getMissingBlocksCount());
+    System.out.println("Missing blocks (with replication factor 1): " +
+                      dfs.getMissingReplOneBlocksCount());
 
     System.out.println();
 
@@ -622,6 +634,38 @@ public class DFSAdmin extends FsShell {
       }
     }
     throw new IOException("Cannot identify the storage policy for " + argv[1]);
+  }
+
+  public int triggerBlockReport(String[] argv) throws IOException {
+    List<String> args = new LinkedList<String>();
+    for (int j = 1; j < argv.length; j++) {
+      args.add(argv[j]);
+    }
+    boolean incremental = StringUtils.popOption("-incremental", args);
+    String hostPort = StringUtils.popFirstNonOption(args);
+    if (hostPort == null) {
+      System.err.println("You must specify a host:port pair.");
+      return 1;
+    }
+    if (!args.isEmpty()) {
+      System.err.print("Can't understand arguments: " +
+        Joiner.on(" ").join(args) + "\n");
+      return 1;
+    }
+    ClientDatanodeProtocol dnProxy = getDataNodeProxy(hostPort);
+    try {
+      dnProxy.triggerBlockReport(
+          new BlockReportOptions.Factory().
+              setIncremental(incremental).
+              build());
+    } catch (IOException e) {
+      System.err.println("triggerBlockReport error: " + e);
+      return 1;
+    }
+    System.out.println("Triggering " +
+        (incremental ? "an incremental " : "a full ") +
+        "block report on " + hostPort + ".");
+    return 0;
   }
 
   /**
@@ -915,9 +959,14 @@ public class DFSAdmin extends FsShell {
 
     String refreshCallQueue = "-refreshCallQueue: Reload the call queue from config\n";
 
+    String reconfig = "-reconfig <datanode|...> <host:ipc_port> <start|status>:\n" +
+        "\tStarts reconfiguration or gets the status of an ongoing reconfiguration.\n" +
+        "\tThe second parameter specifies the node type.\n" +
+        "\tCurrently, only reloading DataNode's configuration is supported.\n";
+
     String genericRefresh = "-refresh: Arguments are <hostname:port> <resource_identifier> [arg1..argn]\n" +
       "\tTriggers a runtime-refresh of the resource specified by <resource_identifier>\n" +
-      "\ton <hostname:port>. All other args after are sent to the host.";
+      "\ton <hostname:port>. All other args after are sent to the host.\n";
 
     String printTopology = "-printTopology: Print a tree of the racks and their\n" +
                            "\t\tnodes as reported by the Namenode\n";
@@ -972,6 +1021,12 @@ public class DFSAdmin extends FsShell {
     String getStoragePolicy = "-getStoragePolicy path\n"
         + "\tGet the storage policy for a file/directory.\n";
 
+    String triggerBlockReport =
+      "-triggerBlockReport [-incremental] <datanode_host:ipc_port>\n"
+        + "\tTrigger a block report for the datanode.\n"
+        + "\tIf 'incremental' is specified, it will be an incremental\n"
+        + "\tblock report; otherwise, it will be a full block report.\n";
+
     String help = "-help [cmd]: \tDisplays help for the given command or all commands if none\n" +
       "\t\tis specified.\n";
 
@@ -1011,6 +1066,8 @@ public class DFSAdmin extends FsShell {
       System.out.println(refreshCallQueue);
     } else if ("refresh".equals(cmd)) {
       System.out.println(genericRefresh);
+    } else if ("reconfig".equals(cmd)) {
+      System.out.println(reconfig);
     } else if ("printTopology".equals(cmd)) {
       System.out.println(printTopology);
     } else if ("refreshNamenodes".equals(cmd)) {
@@ -1055,6 +1112,7 @@ public class DFSAdmin extends FsShell {
       System.out.println(refreshSuperUserGroupsConfiguration);
       System.out.println(refreshCallQueue);
       System.out.println(genericRefresh);
+      System.out.println(reconfig);
       System.out.println(printTopology);
       System.out.println(refreshNamenodes);
       System.out.println(deleteBlockPool);
@@ -1066,6 +1124,7 @@ public class DFSAdmin extends FsShell {
       System.out.println(getDatanodeInfo);
       System.out.println(setStoragePolicy);
       System.out.println(getStoragePolicy);
+      System.out.println(triggerBlockReport);
       System.out.println(help);
       System.out.println();
       ToolRunner.printGenericCommandUsage(System.out);
@@ -1364,6 +1423,76 @@ public class DFSAdmin extends FsShell {
     return 0;
   }
 
+  public int reconfig(String[] argv, int i) throws IOException {
+    String nodeType = argv[i];
+    String address = argv[i + 1];
+    String op = argv[i + 2];
+    if ("start".equals(op)) {
+      return startReconfiguration(nodeType, address);
+    } else if ("status".equals(op)) {
+      return getReconfigurationStatus(nodeType, address, System.out, System.err);
+    }
+    System.err.println("Unknown operation: " + op);
+    return -1;
+  }
+
+  int startReconfiguration(String nodeType, String address) throws IOException {
+    if ("datanode".equals(nodeType)) {
+      ClientDatanodeProtocol dnProxy = getDataNodeProxy(address);
+      dnProxy.startReconfiguration();
+      System.out.println("Started reconfiguration task on DataNode " + address);
+      return 0;
+    } else {
+      System.err.println("Node type " + nodeType +
+          " does not support reconfiguration.");
+      return 1;
+    }
+  }
+
+  int getReconfigurationStatus(String nodeType, String address,
+      PrintStream out, PrintStream err) throws IOException {
+    if ("datanode".equals(nodeType)) {
+      ClientDatanodeProtocol dnProxy = getDataNodeProxy(address);
+      try {
+        ReconfigurationTaskStatus status = dnProxy.getReconfigurationStatus();
+        out.print("Reconfiguring status for DataNode[" + address + "]: ");
+        if (!status.hasTask()) {
+          out.println("no task was found.");
+          return 0;
+        }
+        out.print("started at " + new Date(status.getStartTime()));
+        if (!status.stopped()) {
+          out.println(" and is still running.");
+          return 0;
+        }
+
+        out.println(" and finished at " +
+            new Date(status.getEndTime()).toString() + ".");
+        for (Map.Entry<PropertyChange, Optional<String>> result :
+            status.getStatus().entrySet()) {
+          if (!result.getValue().isPresent()) {
+            out.print("SUCCESS: ");
+          } else {
+            out.print("FAILED: ");
+          }
+          out.printf("Change property %s\n\tFrom: \"%s\"\n\tTo: \"%s\"\n",
+              result.getKey().prop, result.getKey().oldVal,
+              result.getKey().newVal);
+          if (result.getValue().isPresent()) {
+            out.println("\tError: " + result.getValue().get() + ".");
+          }
+        }
+      } catch (IOException e) {
+        err.println("DataNode reloading configuration: " + e + ".");
+        return 1;
+      }
+    } else {
+      err.println("Node type " + nodeType + " does not support reconfiguration.");
+      return 1;
+    }
+    return 0;
+  }
+
   public int genericRefresh(String[] argv, int i) throws IOException {
     String hostport = argv[i++];
     String identifier = argv[i++];
@@ -1482,6 +1611,9 @@ public class DFSAdmin extends FsShell {
     } else if ("-refreshCallQueue".equals(cmd)) {
       System.err.println("Usage: hdfs dfsadmin"
                          + " [-refreshCallQueue]");
+    } else if ("-reconfig".equals(cmd)) {
+      System.err.println("Usage: java DFSAdmin"
+                         + " [-reconfig <datanode|...> <host:port> <start|status>]");
     } else if ("-refresh".equals(cmd)) {
       System.err.println("Usage: hdfs dfsadmin"
                          + " [-refresh <hostname:port> <resource_identifier> [arg1..argn]");
@@ -1506,6 +1638,9 @@ public class DFSAdmin extends FsShell {
     } else if ("-getDatanodeInfo".equals(cmd)) {
       System.err.println("Usage: hdfs dfsadmin"
           + " [-getDatanodeInfo <datanode_host:ipc_port>]");
+    } else if ("-triggerBlockReport".equals(cmd)) {
+      System.err.println("Usage: java DFSAdmin"
+          + " [-triggerBlockReport [-incremental] <datanode_host:ipc_port>]");
     } else {
       System.err.println("Usage: hdfs dfsadmin");
       System.err.println("Note: Administrative commands can only be run as the HDFS superuser.");
@@ -1614,6 +1749,11 @@ public class DFSAdmin extends FsShell {
         printUsage(cmd);
         return exitCode;
       }
+    } else if ("-reconfig".equals(cmd)) {
+      if (argv.length != 4) {
+        printUsage(cmd);
+        return exitCode;
+      }
     } else if ("-deleteBlockPool".equals(cmd)) {
       if ((argv.length != 3) && (argv.length != 4)) {
         printUsage(cmd);
@@ -1641,6 +1781,11 @@ public class DFSAdmin extends FsShell {
       }
     } else if ("-setStoragePolicy".equals(cmd)) {
       if (argv.length != 3) {
+        printUsage(cmd);
+        return exitCode;
+      }
+    } else if ("-triggerBlockReport".equals(cmd)) {
+      if (argv.length < 1) {
         printUsage(cmd);
         return exitCode;
       }
@@ -1720,10 +1865,14 @@ public class DFSAdmin extends FsShell {
         exitCode = shutdownDatanode(argv, i);
       } else if ("-getDatanodeInfo".equals(cmd)) {
         exitCode = getDatanodeInfo(argv, i);
+      } else if ("-reconfig".equals(cmd)) {
+        exitCode = reconfig(argv, i);
       } else if ("-setStoragePolicy".equals(cmd)) {
         exitCode = setStoragePolicy(argv);
       } else if ("-getStoragePolicy".equals(cmd)) {
         exitCode = getStoragePolicy(argv);
+      } else if ("-triggerBlockReport".equals(cmd)) {
+        exitCode = triggerBlockReport(argv);
       } else if ("-help".equals(cmd)) {
         if (i < argv.length) {
           printHelp(argv[i]);

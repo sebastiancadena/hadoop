@@ -519,7 +519,13 @@ abstract public class Shell {
     };
     try {
       errThread.start();
-    } catch (IllegalStateException ise) { }
+    } catch (IllegalStateException ise) {
+    } catch (OutOfMemoryError oe) {
+      LOG.error("Caught " + oe + ". One possible reason is that ulimit"
+          + " setting of 'max user processes' is too low. If so, do"
+          + " 'ulimit -u <largerNum>' and try again.");
+      throw oe;
+    }
     try {
       parseExecResult(inReader); // parse the output
       // clear the input stream buffer
@@ -643,6 +649,18 @@ abstract public class Shell {
     }
   }
   
+  public interface CommandExecutor {
+
+    void execute() throws IOException;
+
+    int getExitCode() throws IOException;
+
+    String getOutput() throws IOException;
+
+    void close();
+    
+  }
+  
   /**
    * A simple shell command executor.
    * 
@@ -651,7 +669,8 @@ abstract public class Shell {
    * directory and the environment remains unchanged. The output of the command 
    * is stored as-is and is expected to be small.
    */
-  public static class ShellCommandExecutor extends Shell {
+  public static class ShellCommandExecutor extends Shell 
+      implements CommandExecutor {
     
     private String[] command;
     private StringBuffer output;
@@ -742,6 +761,10 @@ abstract public class Shell {
         builder.append(' ');
       }
       return builder.toString();
+    }
+
+    @Override
+    public void close() {
     }
   }
   

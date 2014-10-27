@@ -103,6 +103,7 @@ import org.apache.hadoop.hdfs.protocol.proto.AclProtos.AclEditLogProto;
 import org.apache.hadoop.hdfs.protocol.proto.XAttrProtos.XAttrEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockStoragePolicySuite;
 import org.apache.hadoop.hdfs.util.XMLUtils;
 import org.apache.hadoop.hdfs.util.XMLUtils.InvalidXmlException;
 import org.apache.hadoop.hdfs.util.XMLUtils.Stanza;
@@ -410,9 +411,11 @@ public abstract class FSEditLogOp {
     String clientName;
     String clientMachine;
     boolean overwrite;
+    byte storagePolicyId;
     
     private AddCloseOp(FSEditLogOpCodes opCode) {
       super(opCode);
+      storagePolicyId = BlockStoragePolicySuite.ID_UNSPECIFIED;
       assert(opCode == OP_ADD || opCode == OP_CLOSE);
     }
     
@@ -495,6 +498,11 @@ public abstract class FSEditLogOp {
       return (T)this;
     }
 
+    <T extends AddCloseOp> T setStoragePolicyId(byte storagePolicyId) {
+      this.storagePolicyId = storagePolicyId;
+      return (T)this;
+    }
+
     @Override
     public void writeFields(DataOutputStream out) throws IOException {
       FSImageSerialization.writeLong(inodeId, out);
@@ -514,6 +522,7 @@ public abstract class FSEditLogOp {
         FSImageSerialization.writeString(clientName,out);
         FSImageSerialization.writeString(clientMachine,out);
         FSImageSerialization.writeBoolean(overwrite, out);
+        FSImageSerialization.writeByte(storagePolicyId, out);
         // write clientId and callId
         writeRpcIds(rpcClientId, rpcCallId, out);
       }
@@ -585,6 +594,12 @@ public abstract class FSEditLogOp {
         } else {
           this.overwrite = false;
         }
+        if (NameNodeLayoutVersion.supports(
+            NameNodeLayoutVersion.Feature.BLOCK_STORAGE_POLICY, logVersion)) {
+          this.storagePolicyId = FSImageSerialization.readByte(in);
+        } else {
+          this.storagePolicyId = BlockStoragePolicySuite.ID_UNSPECIFIED;
+        }
         // read clientId and callId
         readRpcIds(in, logVersion);
       } else {
@@ -645,6 +660,8 @@ public abstract class FSEditLogOp {
       if (this.opCode == OP_ADD) {
         appendRpcIdsToString(builder, rpcClientId, rpcCallId);
       }
+      builder.append(", storagePolicyId=");
+      builder.append(storagePolicyId);
       builder.append(", opCode=");
       builder.append(opCode);
       builder.append(", txid=");
@@ -693,6 +710,7 @@ public abstract class FSEditLogOp {
       this.mtime = Long.parseLong(st.getValue("MTIME"));
       this.atime = Long.parseLong(st.getValue("ATIME"));
       this.blockSize = Long.parseLong(st.getValue("BLOCKSIZE"));
+
       this.clientName = st.getValue("CLIENT_NAME");
       this.clientMachine = st.getValue("CLIENT_MACHINE");
       this.overwrite = Boolean.parseBoolean(st.getValueOrNull("OVERWRITE"));

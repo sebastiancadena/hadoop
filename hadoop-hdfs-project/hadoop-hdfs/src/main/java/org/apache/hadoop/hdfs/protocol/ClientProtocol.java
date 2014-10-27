@@ -24,7 +24,7 @@ import java.util.List;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.hadoop.crypto.CipherSuite;
+import org.apache.hadoop.crypto.CryptoProtocolVersion;
 import org.apache.hadoop.fs.BatchedRemoteIterator.BatchedEntries;
 import org.apache.hadoop.fs.CacheFlag;
 import org.apache.hadoop.fs.ContentSummary;
@@ -163,6 +163,7 @@ public interface ClientProtocol {
    * @param createParent create missing parent directory if true
    * @param replication block replication factor.
    * @param blockSize maximum block size.
+   * @param supportedVersions CryptoProtocolVersions supported by the client
    * 
    * @return the status of the created file, it could be null if the server
    *           doesn't support returning the file status
@@ -191,7 +192,7 @@ public interface ClientProtocol {
   public HdfsFileStatus create(String src, FsPermission masked,
       String clientName, EnumSetWritable<CreateFlag> flag,
       boolean createParent, short replication, long blockSize, 
-      List<CipherSuite> cipherSuites)
+      CryptoProtocolVersion[] supportedVersions)
       throws AccessControlException, AlreadyBeingCreatedException,
       DSQuotaExceededException, FileAlreadyExistsException,
       FileNotFoundException, NSQuotaExceededException,
@@ -651,6 +652,7 @@ public interface ClientProtocol {
   public int GET_STATS_UNDER_REPLICATED_IDX = 3;
   public int GET_STATS_CORRUPT_BLOCKS_IDX = 4;
   public int GET_STATS_MISSING_BLOCKS_IDX = 5;
+  public int GET_STATS_MISSING_REPL_ONE_BLOCKS_IDX = 6;
   
   /**
    * Get a set of statistics about the filesystem.
@@ -662,7 +664,8 @@ public interface ClientProtocol {
    * <li> [3] contains number of under replicated blocks in the system.</li>
    * <li> [4] contains number of blocks with a corrupt replica. </li>
    * <li> [5] contains number of blocks without any good replicas left. </li>
-   * <li> [6] contains the total used space of the block pool. </li>
+   * <li> [6] contains number of blocks which have replication factor
+   *          1 and have lost the only replica. </li>
    * </ul>
    * Use public constants like {@link #GET_STATS_CAPACITY_IDX} in place of 
    * actual numbers to index into the array.

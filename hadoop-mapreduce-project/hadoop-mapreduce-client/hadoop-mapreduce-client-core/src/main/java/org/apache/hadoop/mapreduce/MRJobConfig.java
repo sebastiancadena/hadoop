@@ -63,6 +63,8 @@ public interface MRJobConfig {
 
   public static final String QUEUE_NAME = "mapreduce.job.queuename";
 
+  public static final String RESERVATION_ID = "mapreduce.job.reservation.id";
+
   public static final String JOB_TAGS = "mapreduce.job.tags";
 
   public static final String JVM_NUMTASKS_TORUN = "mapreduce.job.jvm.numtasks";
@@ -181,6 +183,10 @@ public interface MRJobConfig {
   public static final String TASK_PROFILE = "mapreduce.task.profile";
 
   public static final String TASK_PROFILE_PARAMS = "mapreduce.task.profile.params";
+
+  public static final String DEFAULT_TASK_PROFILE_PARAMS =
+      "-agentlib:hprof=cpu=samples,heap=sites,force=n,thread=y,"
+          + "verbose=n,file=%s";
 
   public static final String NUM_MAP_PROFILES = "mapreduce.task.profile.maps";
 
@@ -392,7 +398,7 @@ public interface MRJobConfig {
    * reconnecting to the RM to fetch Application Status.
    */
   public static final String MR_CLIENT_TO_AM_IPC_MAX_RETRIES_ON_TIMEOUTS =
-    MR_PREFIX + "yarn.app.mapreduce.client-am.ipc.max-retries-on-timeouts";
+    MR_PREFIX + "client-am.ipc.max-retries-on-timeouts";
   public static final int
     DEFAULT_MR_CLIENT_TO_AM_IPC_MAX_RETRIES_ON_TIMEOUTS = 3;
 
@@ -612,7 +618,12 @@ public interface MRJobConfig {
   
   public static final String MR_AM_ADMIN_USER_ENV =
       MR_AM_PREFIX + "admin.user.env";
-  
+
+  public static final String MR_AM_PROFILE = MR_AM_PREFIX + "profile";
+  public static final boolean DEFAULT_MR_AM_PROFILE = false;
+  public static final String MR_AM_PROFILE_PARAMS = MR_AM_PREFIX
+      + "profile.params";
+
   public static final String MAPRED_MAP_ADMIN_JAVA_OPTS =
       "mapreduce.admin.map.child.java.opts";
 

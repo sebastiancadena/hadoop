@@ -79,6 +79,24 @@ public abstract class ContainerExecutor implements Configurable {
   public abstract void init() throws IOException;
 
   /**
+   * On Windows the ContainerLaunch creates a temporary special jar manifest of 
+   * other jars to workaround the CLASSPATH length. In a  secure cluster this 
+   * jar must be localized so that the container has access to it. 
+   * This function localizes on-demand the jar.
+   * 
+   * @param classPathJar
+   * @param owner
+   * @throws IOException
+   */
+  public Path localizeClasspathJar(Path classPathJar, Path pwd, String owner) 
+      throws IOException {
+    // Non-secure executor simply use the classpath created 
+    // in the NM fprivate folder
+    return classPathJar;
+  }
+  
+  
+  /**
    * Prepare the environment for containers in this application to execute.
    * For $x in local.dirs
    *   create $x/$user/$appId
@@ -91,14 +109,13 @@ public abstract class ContainerExecutor implements Configurable {
    * @param appId id of the application
    * @param nmPrivateContainerTokens path to localized credentials, rsrc by NM
    * @param nmAddr RPC address to contact NM
-   * @param localDirs nm-local-dirs
-   * @param logDirs nm-log-dirs
+   * @param dirsHandler NM local dirs service, for nm-local-dirs and nm-log-dirs
    * @throws IOException For most application init failures
    * @throws InterruptedException If application init thread is halted by NM
    */
   public abstract void startLocalizer(Path nmPrivateContainerTokens,
       InetSocketAddress nmAddr, String user, String appId, String locId,
-      List<String> localDirs, List<String> logDirs)
+      LocalDirsHandlerService dirsHandler)
     throws IOException, InterruptedException;
 
 
@@ -118,8 +135,8 @@ public abstract class ContainerExecutor implements Configurable {
    */
   public abstract int launchContainer(Container container,
       Path nmPrivateContainerScriptPath, Path nmPrivateTokensPath,
-      String user, String appId, Path containerWorkDir, List<String> localDirs,
-      List<String> logDirs) throws IOException;
+      String user, String appId, Path containerWorkDir, 
+      List<String> localDirs, List<String> logDirs) throws IOException;
 
   public abstract boolean signalContainer(String user, String pid,
       Signal signal)
@@ -264,8 +281,8 @@ public abstract class ContainerExecutor implements Configurable {
    *  and associate the given groupId in a process group. On
    *  non-Windows, groupId is ignored. 
    */
-  protected static String[] getRunCommand(String command, String groupId,
-                                          Configuration conf) {
+  protected String[] getRunCommand(String command, String groupId,
+      String userName, Path pidFile, Configuration conf) {
     boolean containerSchedPriorityIsSet = false;
     int containerSchedPriorityAdjustment = 
         YarnConfiguration.DEFAULT_NM_CONTAINER_EXECUTOR_SCHED_PRIORITY;
@@ -396,5 +413,4 @@ public abstract class ContainerExecutor implements Configurable {
       }
     }
   }
-
 }

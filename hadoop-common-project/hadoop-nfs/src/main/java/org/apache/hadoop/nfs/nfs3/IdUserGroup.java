@@ -45,8 +45,8 @@ public class IdUserGroup {
   private final static String OS = System.getProperty("os.name");
 
   /** Shell commands to get users and groups */
-  static final String LINUX_GET_ALL_USERS_CMD = "getent passwd | cut -d: -f1,3";
-  static final String LINUX_GET_ALL_GROUPS_CMD = "getent group | cut -d: -f1,3";
+  static final String GET_ALL_USERS_CMD = "getent passwd | cut -d: -f1,3";
+  static final String GET_ALL_GROUPS_CMD = "getent group | cut -d: -f1,3";
   static final String MAC_GET_ALL_USERS_CMD = "dscl . -list /Users UniqueID";
   static final String MAC_GET_ALL_GROUPS_CMD = "dscl . -list /Groups PrimaryGroupID";
 
@@ -114,7 +114,7 @@ public class IdUserGroup {
       + "The host system with duplicated user/group name or id might work fine most of the time by itself.\n"
       + "However when NFS gateway talks to HDFS, HDFS accepts only user and group name.\n"
       + "Therefore, same name means the same user or same group. To find the duplicated names/ids, one can do:\n"
-      + "<getent passwd | cut -d: -f1,3> and <getent group | cut -d: -f1,3> on Linux systms,\n"
+      + "<getent passwd | cut -d: -f1,3> and <getent group | cut -d: -f1,3> on Linux systems,\n"
       + "<dscl . -list /Users UniqueID> and <dscl . -list /Groups PrimaryGroupID> on MacOS.";
   
   private static void reportDuplicateEntry(final String header,
@@ -223,16 +223,15 @@ public class IdUserGroup {
           + "' does not exist.");
     }
 
-    if (OS.startsWith("Linux")) {
-      updateMapInternal(uMap, "user", LINUX_GET_ALL_USERS_CMD, ":",
-          staticMapping.uidMapping);
-      updateMapInternal(gMap, "group", LINUX_GET_ALL_GROUPS_CMD, ":",
-          staticMapping.gidMapping);
-    } else {
-      // Mac
+    if (OS.startsWith("Mac")) {
       updateMapInternal(uMap, "user", MAC_GET_ALL_USERS_CMD, "\\s+",
           staticMapping.uidMapping);
       updateMapInternal(gMap, "group", MAC_GET_ALL_GROUPS_CMD, "\\s+",
+          staticMapping.gidMapping);
+    } else {
+      updateMapInternal(uMap, "user", GET_ALL_USERS_CMD, ":",
+          staticMapping.uidMapping);
+      updateMapInternal(gMap, "group", GET_ALL_GROUPS_CMD, ":",
           staticMapping.gidMapping);
     }
 
@@ -373,7 +372,7 @@ public class IdUserGroup {
       uid = getUid(user);
     } catch (IOException e) {
       uid = user.hashCode();
-      LOG.info("Can't map user " + user + ". Use its string hashcode:" + uid, e);
+      LOG.info("Can't map user " + user + ". Use its string hashcode:" + uid);
     }
     return uid;
   }
@@ -386,7 +385,7 @@ public class IdUserGroup {
       gid = getGid(group);
     } catch (IOException e) {
       gid = group.hashCode();
-      LOG.info("Can't map group " + group + ". Use its string hashcode:" + gid, e);
+      LOG.info("Can't map group " + group + ". Use its string hashcode:" + gid);
     }
     return gid;
   }

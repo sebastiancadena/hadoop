@@ -42,6 +42,7 @@ import org.apache.hadoop.hdfs.server.datanode.Replica;
 import org.apache.hadoop.hdfs.server.datanode.ReplicaInPipelineInterface;
 import org.apache.hadoop.hdfs.server.datanode.StorageLocation;
 import org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetFactory;
+import org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsVolumeImpl;
 import org.apache.hadoop.hdfs.server.datanode.metrics.FSDatasetMBean;
 import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringBlock;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
@@ -116,13 +117,16 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   /** @return a list of finalized blocks for the given block pool. */
   public List<FinalizedReplica> getFinalizedBlocks(String bpid);
 
+  /** @return a list of finalized blocks for the given block pool. */
+  public List<FinalizedReplica> getFinalizedBlocksOnPersistentStorage(String bpid);
+
   /**
    * Check whether the in-memory block record matches the block on the disk,
    * and, in case that they are not matched, update the record or mark it
    * as corrupted.
    */
   public void checkAndUpdate(String bpid, long blockId, File diskFile,
-      File diskMetaFile, FsVolumeSpi vol);
+      File diskMetaFile, FsVolumeSpi vol) throws IOException;
 
   /**
    * @param b - the block
@@ -197,7 +201,7 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
    * @throws IOException if an error occurs
    */
   public ReplicaInPipelineInterface createRbw(StorageType storageType,
-      ExtendedBlock b) throws IOException;
+      ExtendedBlock b, boolean allowLazyPersist) throws IOException;
 
   /**
    * Recovers a RBW replica and returns the meta info of the replica
@@ -263,6 +267,9 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
    * The block size is what is in the parameter b and it must match the amount
    *  of data written
    * @throws IOException
+   * @throws ReplicaNotFoundException if the replica can not be found when the
+   * block is been finalized. For instance, the block resides on an HDFS volume
+   * that has been removed.
    */
   public void finalizeBlock(ExtendedBlock b) throws IOException;
 
@@ -460,5 +467,15 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   public void submitBackgroundSyncFileRangeRequest(final ExtendedBlock block,
       final FileDescriptor fd, final long offset, final long nbytes,
       final int flags);
-}
 
+  /**
+   * Callback from RamDiskAsyncLazyPersistService upon async lazy persist task end
+   */
+   public void onCompleteLazyPersist(String bpId, long blockId,
+      long creationTime, File[] savedFiles, FsVolumeImpl targetVolume);
+
+   /**
+    * Callback from RamDiskAsyncLazyPersistService upon async lazy persist task fail
+    */
+   public void onFailLazyPersist(String bpId, long blockId);
+}

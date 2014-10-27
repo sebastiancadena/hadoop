@@ -35,9 +35,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.apache.commons.io.input.BoundedInputStream;
 import org.apache.commons.logging.Log;
@@ -60,9 +64,16 @@ import org.apache.hadoop.io.file.tfile.TFile;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.LogAggregationContext;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.util.ConverterUtils;
+import org.apache.hadoop.yarn.util.Times;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Predicate;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 
 @Public
 @Evolving
@@ -149,20 +160,33 @@ public class AggregatedLogFormat {
     private final List<String> rootLogDirs;
     private final ContainerId containerId;
     private final String user;
+    private final LogAggregationContext logAggregationContext;
+    private Set<File> uploadedFiles = new HashSet<File>();
+    private final Set<String> alreadyUploadedLogFiles;
+    private Set<String> allExistingFileMeta = new HashSet<String>();
     // TODO Maybe add a version string here. Instead of changing the version of
     // the entire k-v format
 
     public LogValue(List<String> rootLogDirs, ContainerId containerId,
         String user) {
+      this(rootLogDirs, containerId, user, null, new HashSet<String>());
+    }
+
+    public LogValue(List<String> rootLogDirs, ContainerId containerId,
+        String user, LogAggregationContext logAggregationContext,
+        Set<String> alreadyUploadedLogFiles) {
       this.rootLogDirs = new ArrayList<String>(rootLogDirs);
       this.containerId = containerId;
       this.user = user;
 
       // Ensure logs are processed in lexical order
       Collections.sort(this.rootLogDirs);
+      this.logAggregationContext = logAggregationContext;
+      this.alreadyUploadedLogFiles = alreadyUploadedLogFiles;
     }
 
-    public void write(DataOutputStream out) throws IOException {
+    private Set<File> getPendingLogFilesToUploadForThisContainer() {
+      Set<File> pendingUploadFiles = new HashSet<File>();
       for (String rootLogDir : this.rootLogDirs) {
         File appLogDir =
             new File(rootLogDir, 
@@ -177,60 +201,163 @@ public class AggregatedLogFormat {
           continue; // ContainerDir may have been deleted by the user.
         }
 
-        // Write out log files in lexical order
-        File[] logFiles = containerLogDir.listFiles();
-        Arrays.sort(logFiles);
-        for (File logFile : logFiles) {
+        pendingUploadFiles
+          .addAll(getPendingLogFilesToUpload(containerLogDir));
+      }
+      return pendingUploadFiles;
+    }
 
-          final long fileLength = logFile.length();
+    public void write(DataOutputStream out, Set<File> pendingUploadFiles)
+        throws IOException {
+      List<File> fileList = new ArrayList<File>(pendingUploadFiles);
+      Collections.sort(fileList);
 
-          // Write the logFile Type
-          out.writeUTF(logFile.getName());
+      for (File logFile : fileList) {
+        // We only aggregate top level files.
+        // Ignore anything inside sub-folders.
+        if (logFile.isDirectory()) {
+          LOG.warn(logFile.getAbsolutePath() + " is a directory. Ignore it.");
+          continue;
+        }
 
-          // Write the log length as UTF so that it is printable
-          out.writeUTF(String.valueOf(fileLength));
+        FileInputStream in = null;
+        try {
+          in = secureOpenFile(logFile);
+        } catch (IOException e) {
+          logErrorMessage(logFile, e);
+          IOUtils.cleanup(LOG, in);
+          continue;
+        }
 
-          // Write the log itself
-          FileInputStream in = null;
-          try {
-            in = SecureIOUtils.openForRead(logFile, getUser(), null);
-            byte[] buf = new byte[65535];
-            int len = 0;
-            long bytesLeft = fileLength;
-            while ((len = in.read(buf)) != -1) {
-              //If buffer contents within fileLength, write
-              if (len < bytesLeft) {
-                out.write(buf, 0, len);
-                bytesLeft-=len;
-              }
-              //else only write contents within fileLength, then exit early
-              else {
-                out.write(buf, 0, (int)bytesLeft);
-                break;
-              }
+        final long fileLength = logFile.length();
+        // Write the logFile Type
+        out.writeUTF(logFile.getName());
+
+        // Write the uploaded TimeStamp
+        out.writeLong(System.currentTimeMillis());
+
+        // Write the log length as UTF so that it is printable
+        out.writeUTF(String.valueOf(fileLength));
+
+        // Write the log itself
+        try {
+          byte[] buf = new byte[65535];
+          int len = 0;
+          long bytesLeft = fileLength;
+          while ((len = in.read(buf)) != -1) {
+            //If buffer contents within fileLength, write
+            if (len < bytesLeft) {
+              out.write(buf, 0, len);
+              bytesLeft-=len;
             }
-            long newLength = logFile.length();
-            if(fileLength < newLength) {
-              LOG.warn("Aggregated logs truncated by approximately "+
-                  (newLength-fileLength) +" bytes.");
-            }
-          } catch (IOException e) {
-            String message = "Error aggregating log file. Log file : "
-                + logFile.getAbsolutePath() + e.getMessage(); 
-            LOG.error(message, e);
-            out.write(message.getBytes());
-          } finally {
-            if (in != null) {
-              in.close();
+            //else only write contents within fileLength, then exit early
+            else {
+              out.write(buf, 0, (int)bytesLeft);
+              break;
             }
           }
+          long newLength = logFile.length();
+          if(fileLength < newLength) {
+            LOG.warn("Aggregated logs truncated by approximately "+
+                (newLength-fileLength) +" bytes.");
+          }
+          this.uploadedFiles.add(logFile);
+        } catch (IOException e) {
+          String message = logErrorMessage(logFile, e);
+          out.write(message.getBytes());
+        } finally {
+          IOUtils.cleanup(LOG, in);
         }
       }
     }
-    
+
+    @VisibleForTesting
+    public FileInputStream secureOpenFile(File logFile) throws IOException {
+      return SecureIOUtils.openForRead(logFile, getUser(), null);
+    }
+
+    private static String logErrorMessage(File logFile, Exception e) {
+      String message = "Error aggregating log file. Log file : "
+          + logFile.getAbsolutePath() + ". " + e.getMessage();
+      LOG.error(message, e);
+      return message;
+    }
+
     // Added for testing purpose.
     public String getUser() {
       return user;
+    }
+
+    private Set<File> getPendingLogFilesToUpload(File containerLogDir) {
+      Set<File> candidates =
+          new HashSet<File>(Arrays.asList(containerLogDir.listFiles()));
+      for (File logFile : candidates) {
+        this.allExistingFileMeta.add(getLogFileMetaData(logFile));
+      }
+
+      if (this.logAggregationContext != null && candidates.size() > 0) {
+        if (this.logAggregationContext.getIncludePattern() != null
+            && !this.logAggregationContext.getIncludePattern().isEmpty()) {
+          filterFiles(this.logAggregationContext.getIncludePattern(),
+              candidates, false);
+        }
+
+        if (this.logAggregationContext.getExcludePattern() != null
+            && !this.logAggregationContext.getExcludePattern().isEmpty()) {
+          filterFiles(this.logAggregationContext.getExcludePattern(),
+              candidates, true);
+        }
+
+        Iterable<File> mask =
+            Iterables.filter(candidates, new Predicate<File>() {
+              @Override
+              public boolean apply(File next) {
+                return !alreadyUploadedLogFiles
+                  .contains(getLogFileMetaData(next));
+              }
+            });
+        candidates = Sets.newHashSet(mask);
+      }
+      return candidates;
+    }
+
+    private void filterFiles(String pattern, Set<File> candidates,
+        boolean exclusion) {
+      Pattern filterPattern =
+          Pattern.compile(pattern);
+      for (Iterator<File> candidatesItr = candidates.iterator(); candidatesItr
+          .hasNext();) {
+        File candidate = candidatesItr.next();
+        boolean match = filterPattern.matcher(candidate.getName()).find();
+        if ((!match && !exclusion) || (match && exclusion)) {
+          candidatesItr.remove();
+        }
+      }
+    }
+
+    public Set<Path> getCurrentUpLoadedFilesPath() {
+      Set<Path> path = new HashSet<Path>();
+      for (File file : this.uploadedFiles) {
+        path.add(new Path(file.getAbsolutePath()));
+      }
+      return path;
+    }
+
+    public Set<String> getCurrentUpLoadedFileMeta() {
+      Set<String> info = new HashSet<String>();
+      for (File file : this.uploadedFiles) {
+        info.add(getLogFileMetaData(file));
+      }
+      return info;
+    }
+
+    public Set<String> getAllExistingFilesMeta() {
+      return this.allExistingFileMeta;
+    }
+
+    private String getLogFileMetaData(File file) {
+      return containerId.toString() + "_" + file.getName() + "_"
+          + file.lastModified();
     }
   }
 
@@ -242,6 +369,7 @@ public class AggregatedLogFormat {
 
     private final FSDataOutputStream fsDataOStream;
     private final TFile.Writer writer;
+    private FileContext fc;
 
     public LogWriter(final Configuration conf, final Path remoteAppLogFile,
         UserGroupInformation userUgi) throws IOException {
@@ -250,7 +378,7 @@ public class AggregatedLogFormat {
             userUgi.doAs(new PrivilegedExceptionAction<FSDataOutputStream>() {
               @Override
               public FSDataOutputStream run() throws Exception {
-                FileContext fc = FileContext.getFileContext(conf);
+                fc = FileContext.getFileContext(conf);
                 fc.setUMask(APP_LOG_FILE_UMASK);
                 return fc.create(
                     remoteAppLogFile,
@@ -304,11 +432,16 @@ public class AggregatedLogFormat {
     }
 
     public void append(LogKey logKey, LogValue logValue) throws IOException {
+      Set<File> pendingUploadFiles =
+          logValue.getPendingLogFilesToUploadForThisContainer();
+      if (pendingUploadFiles.size() == 0) {
+        return;
+      }
       DataOutputStream out = this.writer.prepareAppendKey(-1);
       logKey.write(out);
       out.close();
       out = this.writer.prepareAppendValue(-1);
-      logValue.write(out);
+      logValue.write(out, pendingUploadFiles);
       out.close();
     }
 
@@ -318,11 +451,7 @@ public class AggregatedLogFormat {
       } catch (IOException e) {
         LOG.warn("Exception closing writer", e);
       }
-      try {
-        this.fsDataOStream.close();
-      } catch (IOException e) {
-        LOG.warn("Exception closing output-stream", e);
-      }
+      IOUtils.closeStream(fsDataOStream);
     }
   }
 
@@ -517,6 +646,7 @@ public class AggregatedLogFormat {
       int bufferSize = 65536;
       char[] cbuf = new char[bufferSize];
       String fileType;
+      long uploadTime;
       String fileLengthStr;
       long fileLength;
 
@@ -527,10 +657,13 @@ public class AggregatedLogFormat {
           // EndOfFile
           return;
         }
+        uploadTime = valueStream.readLong();
         fileLengthStr = valueStream.readUTF();
         fileLength = Long.parseLong(fileLengthStr);
         writer.write("\n\nLogType:");
         writer.write(fileType);
+        writer.write("\nLogUploadTime:");
+        writer.write(String.valueOf(uploadTime));
         writer.write("\nLogLength:");
         writer.write(fileLengthStr);
         writer.write("\nLog Contents:\n");
@@ -562,10 +695,13 @@ public class AggregatedLogFormat {
       byte[] buf = new byte[65535];
 
       String fileType = valueStream.readUTF();
+      long uploadTime = valueStream.readLong();
       String fileLengthStr = valueStream.readUTF();
       long fileLength = Long.parseLong(fileLengthStr);
       out.print("LogType: ");
       out.println(fileType);
+      out.print("LogUploadTime: ");
+      out.println(Times.format(uploadTime));
       out.print("LogLength: ");
       out.println(fileLengthStr);
       out.println("Log Contents:");
@@ -596,6 +732,7 @@ public class AggregatedLogFormat {
   public static class ContainerLogsReader {
     private DataInputStream valueStream;
     private String currentLogType = null;
+    private long currentLogUpLoadTime = 0;
     private long currentLogLength = 0;
     private BoundedInputStream currentLogData = null;
     private InputStreamReader currentLogISR;
@@ -616,12 +753,14 @@ public class AggregatedLogFormat {
       }
 
       currentLogType = null;
+      currentLogUpLoadTime = 0;
       currentLogLength = 0;
       currentLogData = null;
       currentLogISR = null;
 
       try {
         String logType = valueStream.readUTF();
+        long logUpLoadTime = valueStream.readLong();
         String logLengthStr = valueStream.readUTF();
         currentLogLength = Long.parseLong(logLengthStr);
         currentLogData =
@@ -629,6 +768,7 @@ public class AggregatedLogFormat {
         currentLogData.setPropagateClose(false);
         currentLogISR = new InputStreamReader(currentLogData);
         currentLogType = logType;
+        currentLogUpLoadTime = logUpLoadTime;
       } catch (EOFException e) {
       }
 
@@ -637,6 +777,10 @@ public class AggregatedLogFormat {
 
     public String getCurrentLogType() {
       return currentLogType;
+    }
+
+    public long getCurrentLogUpLoadTime() {
+      return currentLogUpLoadTime;
     }
 
     public long getCurrentLogLength() {

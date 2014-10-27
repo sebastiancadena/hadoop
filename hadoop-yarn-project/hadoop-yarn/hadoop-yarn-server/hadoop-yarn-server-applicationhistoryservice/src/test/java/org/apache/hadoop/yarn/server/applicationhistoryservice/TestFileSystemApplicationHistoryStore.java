@@ -61,10 +61,10 @@ public class TestFileSystemApplicationHistoryStore extends
   @Before
   public void setup() throws Exception {
     fs = new RawLocalFileSystem();
-    initStore(fs);
+    initAndStartStore(fs);
   }
 
-  private void initStore(final FileSystem fs) throws IOException,
+  private void initAndStartStore(final FileSystem fs) throws IOException,
       URISyntaxException {
     Configuration conf = new Configuration();
     fs.initialize(new URI("/"), conf);
@@ -137,7 +137,8 @@ public class TestFileSystemApplicationHistoryStore extends
   private void testReadHistoryData(int num) throws IOException {
     testReadHistoryData(num, false, false);
   }
-  
+
+  @SuppressWarnings("deprecation")
   private void testReadHistoryData(
       int num, boolean missingContainer, boolean missingApplicationAttempt)
           throws IOException {
@@ -272,7 +273,7 @@ public class TestFileSystemApplicationHistoryStore extends
     doReturn(true).when(fs).isDirectory(any(Path.class));
 
     try {
-      initStore(fs);
+      initAndStartStore(fs);
     } catch (Exception e) {
       Assert.fail("Exception should not be thrown: " + e);
     }
@@ -293,7 +294,7 @@ public class TestFileSystemApplicationHistoryStore extends
     doThrow(new IOException()).when(fs).mkdirs(any(Path.class));
 
     try {
-      initStore(fs);
+      initAndStartStore(fs);
       Assert.fail("Exception should have been thrown");
     } catch (Exception e) {
       // Expected failure

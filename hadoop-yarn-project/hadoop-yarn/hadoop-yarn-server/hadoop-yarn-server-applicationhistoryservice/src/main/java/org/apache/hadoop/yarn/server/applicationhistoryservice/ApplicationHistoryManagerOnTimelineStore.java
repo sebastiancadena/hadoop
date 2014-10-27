@@ -26,6 +26,7 @@ import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.authorize.AuthorizationException;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
@@ -59,9 +60,14 @@ import org.apache.hadoop.yarn.server.timeline.TimelineReader.Field;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.webapp.util.WebAppUtils;
 
+import com.google.common.annotations.VisibleForTesting;
+
 public class ApplicationHistoryManagerOnTimelineStore extends AbstractService
     implements
     ApplicationHistoryManager {
+
+  @VisibleForTesting
+  static final String UNAVAILABLE = "N/A";
 
   private TimelineDataManager timelineDataManager;
   private ApplicationACLsManager aclsManager;
@@ -227,7 +233,9 @@ public class ApplicationHistoryManagerOnTimelineStore extends AbstractService
       if (entityInfo.containsKey(ApplicationMetricsConstants.APP_VIEW_ACLS_ENTITY_INFO)) {
         String appViewACLsStr = entityInfo.get(
             ApplicationMetricsConstants.APP_VIEW_ACLS_ENTITY_INFO).toString();
-        appViewACLs.put(ApplicationAccessType.VIEW_APP, appViewACLsStr);
+        if (appViewACLsStr.length() > 0) {
+          appViewACLs.put(ApplicationAccessType.VIEW_APP, appViewACLsStr);
+        }
       }
       if (field == ApplicationReportField.USER_AND_ACLS) {
         return new ApplicationReportExt(ApplicationReport.newInstance(
@@ -497,14 +505,29 @@ public class ApplicationHistoryManagerOnTimelineStore extends AbstractService
           app.appReport.setOriginalTrackingUrl(appAttempt.getOriginalTrackingUrl());
         }
       }
-    } catch (YarnException e) {
-      // YarnExcetpion is thrown because the user doesn't have access
+    } catch (AuthorizationException e) {
+      // AuthorizationException is thrown because the user doesn't have access
       app.appReport.setDiagnostics(null);
       app.appReport.setCurrentApplicationAttemptId(null);
     }
     if (app.appReport.getCurrentApplicationAttemptId() == null) {
       app.appReport.setCurrentApplicationAttemptId(
           ApplicationAttemptId.newInstance(app.appReport.getApplicationId(), -1));
+    }
+    if (app.appReport.getHost() == null) {
+      app.appReport.setHost(UNAVAILABLE);
+    }
+    if (app.appReport.getRpcPort() < 0) {
+      app.appReport.setRpcPort(-1);
+    }
+    if (app.appReport.getTrackingUrl() == null) {
+      app.appReport.setTrackingUrl(UNAVAILABLE);
+    }
+    if (app.appReport.getOriginalTrackingUrl() == null) {
+      app.appReport.setOriginalTrackingUrl(UNAVAILABLE);
+    }
+    if (app.appReport.getDiagnostics() == null) {
+      app.appReport.setDiagnostics("");
     }
     return app;
   }
@@ -532,7 +555,7 @@ public class ApplicationHistoryManagerOnTimelineStore extends AbstractService
          if (!aclsManager.checkAccess(UserGroupInformation.getCurrentUser(),
              ApplicationAccessType.VIEW_APP, app.appReport.getUser(),
              app.appReport.getApplicationId())) {
-           throw new YarnException("User "
+           throw new AuthorizationException("User "
                + UserGroupInformation.getCurrentUser().getShortUserName()
                + " does not have privilage to see this application "
                + app.appReport.getApplicationId());

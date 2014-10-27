@@ -46,7 +46,9 @@ import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.NodeState;
+import org.apache.hadoop.yarn.api.records.ReservationId;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.Dispatcher;
@@ -128,7 +130,8 @@ public class RMAppImpl implements RMApp, Recoverable {
   private long startTime;
   private long finishTime = 0;
   private long storedFinishTime = 0;
-  private RMAppAttempt currentAttempt;
+  // This field isn't protected by readlock now.
+  private volatile RMAppAttempt currentAttempt;
   private String queue;
   private EventHandler handler;
   private static final AppFinishedTransition FINISHED_TRANSITION =
@@ -141,6 +144,7 @@ public class RMAppImpl implements RMApp, Recoverable {
   private RMAppEvent eventCausingFinalSaving;
   private RMAppState targetedFinalState;
   private RMAppState recoveredFinalState;
+  private ResourceRequest amReq;
 
   Object transitionTodo;
 
@@ -340,7 +344,8 @@ public class RMAppImpl implements RMApp, Recoverable {
       Configuration config, String name, String user, String queue,
       ApplicationSubmissionContext submissionContext, YarnScheduler scheduler,
       ApplicationMasterService masterService, long submitTime,
-      String applicationType, Set<String> applicationTags) {
+      String applicationType, Set<String> applicationTags, 
+      ResourceRequest amReq) {
 
     this.systemClock = new SystemClock();
 
@@ -359,6 +364,7 @@ public class RMAppImpl implements RMApp, Recoverable {
     this.startTime = this.systemClock.getTime();
     this.applicationType = applicationType;
     this.applicationTags = applicationTags;
+    this.amReq = amReq;
 
     int globalMaxAppAttempts = conf.getInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS,
         YarnConfiguration.DEFAULT_RM_AM_MAX_ATTEMPTS);
@@ -376,6 +382,11 @@ public class RMAppImpl implements RMApp, Recoverable {
 
     this.attemptFailuresValidityInterval =
         submissionContext.getAttemptFailuresValidityInterval();
+    if (this.attemptFailuresValidityInterval > 0) {
+      LOG.info("The attemptFailuresValidityInterval for the application: "
+          + this.applicationId + " is " + this.attemptFailuresValidityInterval
+          + ".");
+    }
 
     ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     this.readLock = lock.readLock();
@@ -433,16 +444,11 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   @Override
   public float getProgress() {
-    this.readLock.lock();
-
-    try {
-      if (this.currentAttempt != null) {
-        return this.currentAttempt.getProgress();
-      }
-      return 0;
-    } finally {
-      this.readLock.unlock();
+    RMAppAttempt attempt = this.currentAttempt;
+    if (attempt != null) {
+      return attempt.getProgress();
     }
+    return 0;
   }
 
   @Override
@@ -473,13 +479,7 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   @Override
   public RMAppAttempt getCurrentAppAttempt() {
-    this.readLock.lock();
-
-    try {
-      return this.currentAttempt;
-    } finally {
-      this.readLock.unlock();
-    }
+    return this.currentAttempt;
   }
 
   @Override
@@ -650,30 +650,20 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   @Override
   public String getTrackingUrl() {
-    this.readLock.lock();
-    
-    try {
-      if (this.currentAttempt != null) {
-        return this.currentAttempt.getTrackingUrl();
-      }
-      return null;
-    } finally {
-      this.readLock.unlock();
+    RMAppAttempt attempt = this.currentAttempt;
+    if (attempt != null) {
+      return attempt.getTrackingUrl();
     }
+    return null;
   }
 
   @Override
   public String getOriginalTrackingUrl() {
-    this.readLock.lock();
-    
-    try {
-      if (this.currentAttempt != null) {
-        return this.currentAttempt.getOriginalTrackingUrl();
-      }
-      return null;
-    } finally {
-      this.readLock.unlock();
+    RMAppAttempt attempt = this.currentAttempt;
+    if (attempt != null) {
+      return attempt.getOriginalTrackingUrl();
     }
+    return null;
   }
 
   @Override
@@ -746,7 +736,7 @@ public class RMAppImpl implements RMApp, Recoverable {
           // previously failed attempts(which should not include Preempted,
           // hardware error and NM resync) + 1) equal to the max-attempt
           // limit.
-          maxAppAttempts == (getNumFailedAppAttempts() + 1));
+          maxAppAttempts == (getNumFailedAppAttempts() + 1), amReq);
     attempts.put(appAttemptId, attempt);
     currentAttempt = attempt;
   }
@@ -846,14 +836,16 @@ public class RMAppImpl implements RMApp, Recoverable {
       // started or started but not yet saved.
       if (app.attempts.isEmpty()) {
         app.scheduler.handle(new AppAddedSchedulerEvent(app.applicationId,
-          app.submissionContext.getQueue(), app.user));
+          app.submissionContext.getQueue(), app.user,
+          app.submissionContext.getReservationID()));
         return RMAppState.SUBMITTED;
       }
 
       // Add application to scheduler synchronously to guarantee scheduler
       // knows applications before AM or NM re-registers.
       app.scheduler.handle(new AppAddedSchedulerEvent(app.applicationId,
-        app.submissionContext.getQueue(), app.user, true));
+        app.submissionContext.getQueue(), app.user, true,
+          app.submissionContext.getReservationID()));
 
       // recover attempts
       app.recoverAppAttempts();
@@ -880,7 +872,8 @@ public class RMAppImpl implements RMApp, Recoverable {
     @Override
     public void transition(RMAppImpl app, RMAppEvent event) {
       app.handler.handle(new AppAddedSchedulerEvent(app.applicationId,
-        app.submissionContext.getQueue(), app.user));
+        app.submissionContext.getQueue(), app.user,
+        app.submissionContext.getReservationID()));
     }
   }
 
@@ -1179,6 +1172,11 @@ public class RMAppImpl implements RMApp, Recoverable {
     @Override
     public RMAppState transition(RMAppImpl app, RMAppEvent event) {
       int numberOfFailure = app.getNumFailedAppAttempts();
+      LOG.info("The number of failed attempts"
+          + (app.attemptFailuresValidityInterval > 0 ? " in previous "
+              + app.attemptFailuresValidityInterval + " milliseconds " : " ")
+          + "is " + numberOfFailure + ". The max attempts is "
+          + app.maxAppAttempts);
       if (!app.submissionContext.getUnmanagedAM()
           && numberOfFailure < app.maxAppAttempts) {
         boolean transferStateFromPreviousAttempt;
@@ -1292,5 +1290,10 @@ public class RMAppImpl implements RMApp, Recoverable {
   @VisibleForTesting
   public void setSystemClock(Clock clock) {
     this.systemClock = clock;
+  }
+
+  @Override
+  public ReservationId getReservationId() {
+    return submissionContext.getReservationID();
   }
 }

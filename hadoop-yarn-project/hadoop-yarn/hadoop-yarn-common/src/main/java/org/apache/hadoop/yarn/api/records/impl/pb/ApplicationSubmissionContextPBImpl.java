@@ -18,7 +18,8 @@
 
 package org.apache.hadoop.yarn.api.records.impl.pb;
 
-import com.google.common.base.CharMatcher;
+import java.util.HashSet;
+import java.util.Set;
 
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
@@ -27,7 +28,9 @@ import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
 import org.apache.hadoop.yarn.api.records.LogAggregationContext;
 import org.apache.hadoop.yarn.api.records.Priority;
+import org.apache.hadoop.yarn.api.records.ReservationId;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.proto.YarnProtos.ApplicationIdProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.ApplicationSubmissionContextProto;
@@ -35,12 +38,12 @@ import org.apache.hadoop.yarn.proto.YarnProtos.ApplicationSubmissionContextProto
 import org.apache.hadoop.yarn.proto.YarnProtos.ContainerLaunchContextProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.LogAggregationContextProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.PriorityProto;
+import org.apache.hadoop.yarn.proto.YarnProtos.ReservationIdProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.ResourceProto;
+import org.apache.hadoop.yarn.proto.YarnProtos.ResourceRequestProto;
 
+import com.google.common.base.CharMatcher;
 import com.google.protobuf.TextFormat;
-
-import java.util.HashSet;
-import java.util.Set;
 
 @Private
 @Unstable
@@ -56,7 +59,9 @@ extends ApplicationSubmissionContext {
   private ContainerLaunchContext amContainer = null;
   private Resource resource = null;
   private Set<String> applicationTags = null;
+  private ResourceRequest amResourceRequest = null;
   private LogAggregationContext logAggregationContext = null;
+  private ReservationId reservationId = null;
 
   public ApplicationSubmissionContextPBImpl() {
     builder = ApplicationSubmissionContextProto.newBuilder();
@@ -114,9 +119,16 @@ extends ApplicationSubmissionContext {
       builder.clearApplicationTags();
       builder.addAllApplicationTags(this.applicationTags);
     }
+    if (this.amResourceRequest != null) {
+      builder.setAmContainerResourceRequest(
+          convertToProtoFormat(this.amResourceRequest));
+    }
     if (this.logAggregationContext != null) {
       builder.setLogAggregationContext(
           convertToProtoFormat(this.logAggregationContext));
+    }
+    if (this.reservationId != null) {
+      builder.setReservationId(convertToProtoFormat(this.reservationId));
     }
   }
 
@@ -134,8 +146,7 @@ extends ApplicationSubmissionContext {
     }
     viaProto = false;
   }
-    
-  
+
   @Override
   public Priority getPriority() {
     ApplicationSubmissionContextProtoOrBuilder p = viaProto ? proto : builder;
@@ -148,7 +159,7 @@ extends ApplicationSubmissionContext {
     this.priority = convertFromProtoFormat(p.getPriority());
     return this.priority;
   }
-
+  
   @Override
   public void setPriority(Priority priority) {
     maybeInitBuilder();
@@ -366,6 +377,29 @@ extends ApplicationSubmissionContext {
   }
 
   @Override
+  public ReservationId getReservationID() {
+    ApplicationSubmissionContextProtoOrBuilder p = viaProto ? proto : builder;
+    if (reservationId != null) {
+      return reservationId;
+    }
+    if (!p.hasReservationId()) {
+      return null;
+    }
+    reservationId = convertFromProtoFormat(p.getReservationId());
+    return reservationId;
+  }
+
+  @Override
+  public void setReservationID(ReservationId reservationID) {
+    maybeInitBuilder();
+    if (reservationID == null) {
+      builder.clearReservationId();
+      return;
+    }
+    this.reservationId = reservationID;
+  }
+
+  @Override
   public void
       setKeepContainersAcrossApplicationAttempts(boolean keepContainers) {
     maybeInitBuilder();
@@ -385,6 +419,14 @@ extends ApplicationSubmissionContext {
   private PriorityProto convertToProtoFormat(Priority t) {
     return ((PriorityPBImpl)t).getProto();
   }
+  
+  private ResourceRequestPBImpl convertFromProtoFormat(ResourceRequestProto p) {
+    return new ResourceRequestPBImpl(p);
+  }
+
+  private ResourceRequestProto convertToProtoFormat(ResourceRequest t) {
+    return ((ResourceRequestPBImpl)t).getProto();
+  }
 
   private ApplicationIdPBImpl convertFromProtoFormat(ApplicationIdProto p) {
     return new ApplicationIdPBImpl(p);
@@ -399,7 +441,8 @@ extends ApplicationSubmissionContext {
     return new ContainerLaunchContextPBImpl(p);
   }
 
-  private ContainerLaunchContextProto convertToProtoFormat(ContainerLaunchContext t) {
+  private ContainerLaunchContextProto convertToProtoFormat(
+      ContainerLaunchContext t) {
     return ((ContainerLaunchContextPBImpl)t).getProto();
   }
 
@@ -409,6 +452,47 @@ extends ApplicationSubmissionContext {
 
   private ResourceProto convertToProtoFormat(Resource t) {
     return ((ResourcePBImpl)t).getProto();
+  }
+
+  @Override
+  public String getNodeLabelExpression() {
+    ApplicationSubmissionContextProtoOrBuilder p = viaProto ? proto : builder;
+    if (!p.hasNodeLabelExpression()) {
+      return null;
+    }
+    return p.getNodeLabelExpression();
+  }
+
+  @Override
+  public void setNodeLabelExpression(String labelExpression) {
+    maybeInitBuilder();
+    if (labelExpression == null) {
+      builder.clearNodeLabelExpression();
+      return;
+    }
+    builder.setNodeLabelExpression(labelExpression);
+  }
+  
+  @Override
+  public ResourceRequest getAMContainerResourceRequest() {
+    ApplicationSubmissionContextProtoOrBuilder p = viaProto ? proto : builder;
+    if (this.amResourceRequest != null) {
+      return amResourceRequest;
+    } // Else via proto
+    if (!p.hasAmContainerResourceRequest()) {
+      return null;
+    }
+    amResourceRequest = convertFromProtoFormat(p.getAmContainerResourceRequest());
+    return amResourceRequest;
+  }
+
+  @Override
+  public void setAMContainerResourceRequest(ResourceRequest request) {
+    maybeInitBuilder();
+    if (request == null) {
+      builder.clearAmContainerResourceRequest();
+    }
+    this.amResourceRequest = request;
   }
 
   @Override
@@ -454,5 +538,13 @@ extends ApplicationSubmissionContext {
     if (logAggregationContext == null)
       builder.clearLogAggregationContext();
     this.logAggregationContext = logAggregationContext;
+  }
+
+  private ReservationIdPBImpl convertFromProtoFormat(ReservationIdProto p) {
+    return new ReservationIdPBImpl(p);
+  }
+
+  private ReservationIdProto convertToProtoFormat(ReservationId t) {
+    return ((ReservationIdPBImpl) t).getProto();
   }
 }  
