@@ -48,10 +48,7 @@ import org.apache.hadoop.yarn.api.records.timeline.TimelineEntities;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.server.MiniYARNCluster;
-import org.apache.hadoop.yarn.server.nodemanager.NodeManager;
-import org.apache.hadoop.yarn.server.nodemanager.containermanager.ContainerManagerImpl;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fifo.FifoScheduler;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -62,27 +59,37 @@ public class TestDistributedShell {
   private static final Log LOG =
       LogFactory.getLog(TestDistributedShell.class);
 
-  protected MiniYARNCluster yarnCluster = null;
-  protected Configuration conf = new YarnConfiguration();
+  protected MiniYARNCluster yarnCluster = null;  
+  protected YarnConfiguration conf = null;
+  private static final int NUM_NMS = 1;
 
   protected final static String APPMASTER_JAR =
       JarFinder.getJar(ApplicationMaster.class);
 
   @Before
   public void setup() throws Exception {
+    setupInternal(NUM_NMS);
+  }
+
+  protected void setupInternal(int numNodeManager) throws Exception {
+
     LOG.info("Starting up YARN cluster");
+    
+    conf = new YarnConfiguration();
     conf.setInt(YarnConfiguration.RM_SCHEDULER_MINIMUM_ALLOCATION_MB, 128);
-    conf.setClass(YarnConfiguration.RM_SCHEDULER, 
-        FifoScheduler.class, ResourceScheduler.class);
     conf.set("yarn.log.dir", "target");
     conf.setBoolean(YarnConfiguration.TIMELINE_SERVICE_ENABLED, true);
+    conf.set(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class.getName());
+    
     if (yarnCluster == null) {
-      yarnCluster = new MiniYARNCluster(
-        TestDistributedShell.class.getSimpleName(), 1, 1, 1, 1, true);
+      yarnCluster =
+          new MiniYARNCluster(TestDistributedShell.class.getSimpleName(), 1,
+              numNodeManager, 1, 1, true);
       yarnCluster.init(conf);
+      
       yarnCluster.start();
-      NodeManager  nm = yarnCluster.getNodeManager(0);
-      waitForNMToRegister(nm);
+      
+      waitForNMsToRegister();
       
       URL url = Thread.currentThread().getContextClassLoader().getResource("yarn-site.xml");
       if (url == null) {
@@ -757,13 +764,15 @@ public class TestDistributedShell {
     }
   }
 
-  protected static void waitForNMToRegister(NodeManager nm)
-      throws Exception {
-    int attempt = 60;
-    ContainerManagerImpl cm =
-        ((ContainerManagerImpl) nm.getNMContext().getContainerManager());
-    while (cm.getBlockNewContainerRequestsStatus() && attempt-- > 0) {
-      Thread.sleep(2000);
+  protected void waitForNMsToRegister() throws Exception {
+    int sec = 60;
+    while (sec >= 0) {
+      if (yarnCluster.getResourceManager().getRMContext().getRMNodes().size() 
+          >= NUM_NMS) {
+        break;
+      }
+      Thread.sleep(1000);
+      sec--;
     }
   }
 

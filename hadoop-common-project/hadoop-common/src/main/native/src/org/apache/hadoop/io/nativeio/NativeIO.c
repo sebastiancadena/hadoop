@@ -516,6 +516,86 @@ cleanup:
 
 /*
  * Class:     org_apache_hadoop_io_nativeio_NativeIO_Windows
+ * Method:    createDirectoryWithMode0
+ * Signature: (Ljava/lang/String;I)V
+ *
+ * The "00024" in the function name is an artifact of how JNI encodes
+ * special characters. U+0024 is '$'.
+ */
+JNIEXPORT void JNICALL
+  Java_org_apache_hadoop_io_nativeio_NativeIO_00024Windows_createDirectoryWithMode0
+  (JNIEnv *env, jclass clazz, jstring j_path, jint mode)
+{
+#ifdef WINDOWS
+  DWORD dwRtnCode = ERROR_SUCCESS;
+
+  LPCWSTR path = (LPCWSTR) (*env)->GetStringChars(env, j_path, NULL);
+  if (!path) {
+    goto done;
+  }
+
+  dwRtnCode = CreateDirectoryWithMode(path, mode);
+
+done:
+  if (path) {
+    (*env)->ReleaseStringChars(env, j_path, (const jchar*) path);
+  }
+  if (dwRtnCode != ERROR_SUCCESS) {
+    throw_ioe(env, dwRtnCode);
+  }
+#else
+  THROW(env, "java/io/IOException",
+    "The function Windows.createDirectoryWithMode0() is not supported on this platform");
+#endif
+}
+
+/*
+ * Class:     org_apache_hadoop_io_nativeio_NativeIO_Windows
+ * Method:    createFileWithMode0
+ * Signature: (Ljava/lang/String;JJJI)Ljava/io/FileDescriptor;
+ *
+ * The "00024" in the function name is an artifact of how JNI encodes
+ * special characters. U+0024 is '$'.
+ */
+JNIEXPORT jobject JNICALL
+  Java_org_apache_hadoop_io_nativeio_NativeIO_00024Windows_createFileWithMode0
+  (JNIEnv *env, jclass clazz, jstring j_path,
+  jlong desiredAccess, jlong shareMode, jlong creationDisposition, jint mode)
+{
+#ifdef WINDOWS
+  DWORD dwRtnCode = ERROR_SUCCESS;
+  HANDLE hFile = INVALID_HANDLE_VALUE;
+  jobject fd = NULL;
+
+  LPCWSTR path = (LPCWSTR) (*env)->GetStringChars(env, j_path, NULL);
+  if (!path) {
+    goto done;
+  }
+
+  dwRtnCode = CreateFileWithMode(path, desiredAccess, shareMode,
+      creationDisposition, mode, &hFile);
+  if (dwRtnCode != ERROR_SUCCESS) {
+    goto done;
+  }
+
+  fd = fd_create(env, (long) hFile);
+
+done:
+  if (path) {
+    (*env)->ReleaseStringChars(env, j_path, (const jchar*) path);
+  }
+  if (dwRtnCode != ERROR_SUCCESS) {
+    throw_ioe(env, dwRtnCode);
+  }
+  return fd;
+#else
+  THROW(env, "java/io/IOException",
+    "The function Windows.createFileWithMode0() is not supported on this platform");
+#endif
+}
+
+/*
+ * Class:     org_apache_hadoop_io_nativeio_NativeIO_Windows
  * Method:    createFile
  * Signature: (Ljava/lang/String;JJJ)Ljava/io/FileDescriptor;
  *
@@ -1155,46 +1235,8 @@ Java_org_apache_hadoop_io_nativeio_NativeIO_copyFileUnbuffered0(
 JNIEnv *env, jclass clazz, jstring jsrc, jstring jdst)
 {
 #ifdef UNIX
-#if (defined(__FreeBSD__) || defined(__MACH__))
-  THROW(env, "java/io/IOException",
-      "The function copyFileUnbuffered() is not supported on FreeBSD or Mac OS");
-  return;
-#else
-  const char *src = NULL, *dst = NULL;
-  int srcFd = -1;
-  int dstFd = -1;
-  struct stat s;
-  off_t offset = 0;
-
-  src = (*env)->GetStringUTFChars(env, jsrc, NULL);
-  if (!src) goto cleanup; // exception was thrown
-  dst = (*env)->GetStringUTFChars(env, jdst, NULL);
-  if (!dst) goto cleanup; // exception was thrown
-
-  srcFd = open(src, O_RDONLY);
-  if (srcFd == -1) {
-    throw_ioe(env, errno);
-    goto cleanup;
-  }
-  if (fstat(srcFd, &s) == -1){
-    throw_ioe(env, errno);
-    goto cleanup;
-  }
-  dstFd = open(dst, O_WRONLY | O_CREAT, s.st_mode);
-  if (dstFd == -1) {
-    throw_ioe(env, errno);
-    goto cleanup;
-  }
-  if (sendfile(dstFd, srcFd, &offset, s.st_size) == -1) {
-    throw_ioe(env, errno);
-  }
-
-cleanup:
-  if (src) (*env)->ReleaseStringUTFChars(env, jsrc, src);
-  if (dst) (*env)->ReleaseStringUTFChars(env, jdst, dst);
-  if (srcFd != -1) close(srcFd);
-  if (dstFd != -1) close(dstFd);
-#endif
+  THROW(env, "java/lang/UnsupportedOperationException",
+    "The function copyFileUnbuffered0 should not be used on Unix. Use FileChannel#transferTo instead.");
 #endif
 
 #ifdef WINDOWS

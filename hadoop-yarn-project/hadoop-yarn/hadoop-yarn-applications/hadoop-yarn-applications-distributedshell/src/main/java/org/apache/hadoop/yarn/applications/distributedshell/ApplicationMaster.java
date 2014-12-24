@@ -463,15 +463,12 @@ public class ApplicationMaster {
       scriptPath = envs.get(DSConstants.DISTRIBUTEDSHELLSCRIPTLOCATION);
 
       if (envs.containsKey(DSConstants.DISTRIBUTEDSHELLSCRIPTTIMESTAMP)) {
-        shellScriptPathTimestamp = Long.valueOf(envs
+        shellScriptPathTimestamp = Long.parseLong(envs
             .get(DSConstants.DISTRIBUTEDSHELLSCRIPTTIMESTAMP));
       }
       if (envs.containsKey(DSConstants.DISTRIBUTEDSHELLSCRIPTLEN)) {
-        shellScriptPathLen = Long.valueOf(envs
+        shellScriptPathLen = Long.parseLong(envs
             .get(DSConstants.DISTRIBUTEDSHELLSCRIPTLEN));
-      }
-      if (envs.containsKey(DSConstants.DISTRIBUTEDSHELLTIMELINEDOMAIN)) {
-        domainId = envs.get(DSConstants.DISTRIBUTEDSHELLTIMELINEDOMAIN);
       }
       if (!scriptPath.isEmpty()
           && (shellScriptPathTimestamp <= 0 || shellScriptPathLen <= 0)) {
@@ -481,6 +478,10 @@ public class ApplicationMaster {
         throw new IllegalArgumentException(
             "Illegal values in env for shell script path");
       }
+    }
+
+    if (envs.containsKey(DSConstants.DISTRIBUTEDSHELLTIMELINEDOMAIN)) {
+      domainId = envs.get(DSConstants.DISTRIBUTEDSHELLTIMELINEDOMAIN);
     }
 
     containerMemory = Integer.parseInt(cliParser.getOptionValue(
@@ -496,10 +497,16 @@ public class ApplicationMaster {
     requestPriority = Integer.parseInt(cliParser
         .getOptionValue("priority", "0"));
 
-    // Creating the Timeline Client
-    timelineClient = TimelineClient.createTimelineClient();
-    timelineClient.init(conf);
-    timelineClient.start();
+    if (conf.getBoolean(YarnConfiguration.TIMELINE_SERVICE_ENABLED,
+      YarnConfiguration.DEFAULT_TIMELINE_SERVICE_ENABLED)) {
+      // Creating the Timeline Client
+      timelineClient = TimelineClient.createTimelineClient();
+      timelineClient.init(conf);
+      timelineClient.start();
+    } else {
+      timelineClient = null;
+      LOG.warn("Timeline service is not enabled");
+    }
 
     return true;
   }
@@ -547,9 +554,11 @@ public class ApplicationMaster {
     appSubmitterUgi =
         UserGroupInformation.createRemoteUser(appSubmitterUserName);
     appSubmitterUgi.addCredentials(credentials);
-
-    publishApplicationAttemptEvent(timelineClient, appAttemptID.toString(),
-        DSEvent.DS_APP_ATTEMPT_START, domainId, appSubmitterUgi);
+    
+    if(timelineClient != null) {
+      publishApplicationAttemptEvent(timelineClient, appAttemptID.toString(),
+          DSEvent.DS_APP_ATTEMPT_START, domainId, appSubmitterUgi);
+    }
 
     AMRMClientAsync.CallbackHandler allocListener = new RMCallbackHandler();
     amRMClient = AMRMClientAsync.createAMRMClientAsync(1000, allocListener);
@@ -616,8 +625,10 @@ public class ApplicationMaster {
     }
     numRequestedContainers.set(numTotalContainers);
 
-    publishApplicationAttemptEvent(timelineClient, appAttemptID.toString(),
-        DSEvent.DS_APP_ATTEMPT_END, domainId, appSubmitterUgi);
+    if(timelineClient != null) {
+      publishApplicationAttemptEvent(timelineClient, appAttemptID.toString(),
+          DSEvent.DS_APP_ATTEMPT_END, domainId, appSubmitterUgi);
+    }
   }
 
   @VisibleForTesting
@@ -680,6 +691,11 @@ public class ApplicationMaster {
     
     amRMClient.stop();
 
+    // Stop Timeline Client
+    if(timelineClient != null) {
+      timelineClient.stop();
+    }
+
     return success;
   }
   
@@ -723,8 +739,10 @@ public class ApplicationMaster {
           LOG.info("Container completed successfully." + ", containerId="
               + containerStatus.getContainerId());
         }
-        publishContainerEndEvent(
-            timelineClient, containerStatus, domainId, appSubmitterUgi);
+        if(timelineClient != null) {
+          publishContainerEndEvent(
+              timelineClient, containerStatus, domainId, appSubmitterUgi);
+        }
       }
       
       // ask for more containers if any failed
@@ -839,9 +857,11 @@ public class ApplicationMaster {
       if (container != null) {
         applicationMaster.nmClientAsync.getContainerStatusAsync(containerId, container.getNodeId());
       }
-      ApplicationMaster.publishContainerStartEvent(
-          applicationMaster.timelineClient, container,
-          applicationMaster.domainId, applicationMaster.appSubmitterUgi);
+      if(applicationMaster.timelineClient != null) {
+        ApplicationMaster.publishContainerStartEvent(
+            applicationMaster.timelineClient, container,
+            applicationMaster.domainId, applicationMaster.appSubmitterUgi);
+      }
     }
 
     @Override

@@ -716,17 +716,18 @@ public abstract class Storage extends StorageInfo {
       } catch(OverlappingFileLockException oe) {
         // Cannot read from the locked file on Windows.
         String lockingJvmName = Path.WINDOWS ? "" : (" " + file.readLine());
-        LOG.error("It appears that another namenode" + lockingJvmName
-            + " has already locked the storage directory");
+        LOG.error("It appears that another node " + lockingJvmName
+            + " has already locked the storage directory: " + root, oe);
         file.close();
         return null;
       } catch(IOException e) {
-        LOG.error("Failed to acquire lock on " + lockF + ". If this storage directory is mounted via NFS, " 
+        LOG.error("Failed to acquire lock on " + lockF
+            + ". If this storage directory is mounted via NFS, " 
             + "ensure that the appropriate nfs lock services are running.", e);
         file.close();
         throw e;
       }
-      if (res != null && !deletionHookAdded) {
+      if (!deletionHookAdded) {
         // If the file existed prior to our startup, we didn't
         // call deleteOnExit above. But since we successfully locked
         // the dir, we can take care of cleaning it up.
@@ -818,6 +819,21 @@ public abstract class Storage extends StorageInfo {
   
   protected void addStorageDir(StorageDirectory sd) {
     storageDirs.add(sd);
+  }
+
+  /**
+   * Returns true if the storage directory on the given directory is already
+   * loaded.
+   * @param root the root directory of a {@link StorageDirectory}
+   * @throws IOException if failed to get canonical path.
+   */
+  protected boolean containsStorageDir(File root) throws IOException {
+    for (StorageDirectory sd : storageDirs) {
+      if (sd.getRoot().getCanonicalPath().equals(root.getCanonicalPath())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -1004,10 +1020,11 @@ public abstract class Storage extends StorageInfo {
    * This method copies the contents of the specified source file
    * to the specified destination file using OS specific unbuffered IO.
    * The goal is to avoid churning the file system buffer cache when copying
-   * large files. TheFileUtils#copyLarge function from apache-commons-io library
-   * can be used to achieve this with an internal memory buffer but is less
-   * efficient than the native unbuffered APIs such as sendfile() in Linux and
-   * CopyFileEx() in Windows wrapped in {@link NativeIO#copyFileUnbuffered}.
+   * large files.
+   *
+   * We can't use FileUtils#copyFile from apache-commons-io because it
+   * is a buffered IO based on FileChannel#transferFrom, which uses MmapByteBuffer
+   * internally.
    *
    * The directory holding the destination file is created if it does not exist.
    * If the destination file exists, then this method will delete it first.

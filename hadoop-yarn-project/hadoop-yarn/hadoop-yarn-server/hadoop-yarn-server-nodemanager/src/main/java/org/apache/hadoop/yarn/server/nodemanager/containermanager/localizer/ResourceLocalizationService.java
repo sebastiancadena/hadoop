@@ -775,6 +775,12 @@ public class ResourceLocalizationService extends CompositeService
             if (!publicDirDestPath.getParent().equals(publicRootPath)) {
               DiskChecker.checkDir(new File(publicDirDestPath.toUri().getPath()));
             }
+
+            // In case this is not a newly initialized nm state, ensure
+            // initialized local/log dirs similar to LocalizerRunner
+            getInitializedLocalDirs();
+            getInitializedLogDirs();
+
             // explicitly synchronize pending here to avoid future task
             // completing and being dequeued before pending updated
             synchronized (pending) {
@@ -1122,9 +1128,9 @@ public class ResourceLocalizationService extends CompositeService
       if (systemCredentials == null) {
         return null;
       }
-      LOG.info("Adding new framework tokens from RM for " + appId);
-      for (Token<?> token : systemCredentials.getAllTokens()) {
-        LOG.info("Adding new application-token for localization: " + token);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Adding new framework-token for " + appId
+            + " for localization: " + systemCredentials.getAllTokens());
       }
       return systemCredentials;
     }
@@ -1324,7 +1330,7 @@ public class ResourceLocalizationService extends CompositeService
     RemoteIterator<FileStatus> userDirStatus = lfs.listStatus(userDirPath);
     FileDeletionTask dependentDeletionTask =
         del.createFileDeletionTask(null, userDirPath, new Path[] {});
-    if (userDirStatus != null) {
+    if (userDirStatus != null && userDirStatus.hasNext()) {
       List<FileDeletionTask> deletionTasks = new ArrayList<FileDeletionTask>();
       while (userDirStatus.hasNext()) {
         FileStatus status = userDirStatus.next();

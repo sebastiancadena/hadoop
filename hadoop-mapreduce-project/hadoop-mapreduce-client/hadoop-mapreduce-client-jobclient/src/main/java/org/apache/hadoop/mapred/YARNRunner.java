@@ -357,8 +357,9 @@ public class YARNRunner implements ClientProtocol {
             jobConfPath, LocalResourceType.FILE));
     if (jobConf.get(MRJobConfig.JAR) != null) {
       Path jobJarPath = new Path(jobConf.get(MRJobConfig.JAR));
-      LocalResource rc = createApplicationResource(defaultFileContext,
-          jobJarPath, 
+      LocalResource rc = createApplicationResource(
+          FileContext.getFileContext(jobJarPath.toUri(), jobConf),
+          jobJarPath,
           LocalResourceType.PATTERN);
       String pattern = conf.getPattern(JobContext.JAR_UNPACK_PATTERN, 
           JobConf.UNPACK_JAR_PATTERN_DEFAULT).pattern();
@@ -391,14 +392,7 @@ public class YARNRunner implements ClientProtocol {
     vargs.add(MRApps.crossPlatformifyMREnv(jobConf, Environment.JAVA_HOME)
         + "/bin/java");
 
-    // TODO: why do we use 'conf' some places and 'jobConf' others?
-    long logSize = jobConf.getLong(MRJobConfig.MR_AM_LOG_KB,
-        MRJobConfig.DEFAULT_MR_AM_LOG_KB) << 10;
-    String logLevel = jobConf.get(
-        MRJobConfig.MR_AM_LOG_LEVEL, MRJobConfig.DEFAULT_MR_AM_LOG_LEVEL);
-    int numBackups = jobConf.getInt(MRJobConfig.MR_AM_LOG_BACKUPS,
-        MRJobConfig.DEFAULT_MR_AM_LOG_BACKUPS);
-    MRApps.addLog4jSystemProperties(logLevel, logSize, numBackups, vargs);
+    MRApps.addLog4jSystemProperties(null, vargs, conf);
 
     // Check for Java Lib Path usage in MAP and REDUCE configs
     warnForJavaLibPath(conf.get(MRJobConfig.MAP_JAVA_OPTS,""), "map", 

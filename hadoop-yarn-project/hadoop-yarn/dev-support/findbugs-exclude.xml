@@ -202,6 +202,7 @@
       <Field name="accessibleLabels" />
       <Field name="absoluteNodeLabelCapacities" />
       <Field name="reservationsContinueLooking" />
+      <Field name="absoluteCapacityByNodeLabels" />
     </Or>
     <Bug pattern="IS2_INCONSISTENT_SYNC" />
   </Match>
@@ -262,6 +263,11 @@
   </Match>
   <Match>
     <Class name="org.apache.hadoop.yarn.YarnUncaughtExceptionHandler"/>
+    <Bug pattern="DM_EXIT"/>
+  </Match>
+  <Match>
+    <Class name="org.apache.hadoop.yarn.event.AsyncDispatcher$2"/>
+    <Method name="run" />
     <Bug pattern="DM_EXIT"/>
   </Match>
 
@@ -390,4 +396,25 @@
     <Bug pattern="UI_INHERITANCE_UNSAFE_GETRESOURCE"/>
   </Match>
 
+  <!-- Ignore the false alarms on DM_DEFAULT_ENCODING (encoding already set) -->
+  <Match>
+    <Class name="org.apache.hadoop.yarn.logaggregation.AggregatedLogFormat$LogReader" />
+    <Bug pattern="DM_DEFAULT_ENCODING" />
+  </Match>
+
+  <!-- Ignore EI_EXPOSE_REP2 in timeline service -->
+  <Match>
+    <Class name="org.apache.hadoop.yarn.server.timeline.util.LeveldbUtils$KeyParser" />
+    <Bug pattern="EI_EXPOSE_REP2" />
+  </Match>
+
+  <!-- Ignore unrelated RV_RETURN_VALUE_IGNORED_BAD_PRACTICE warnings. No need to wait for result from executor service -->
+  <Match>
+    <Class name="org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainersLauncher" />
+    <Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE" />
+  </Match>
+  <Match>
+    <Class name="org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.sharedcache.SharedCacheUploadService" />
+    <Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE" />
+  </Match>
 </FindBugsFilter>

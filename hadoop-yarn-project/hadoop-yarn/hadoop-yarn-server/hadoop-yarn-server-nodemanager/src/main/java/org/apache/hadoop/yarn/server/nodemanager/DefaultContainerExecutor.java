@@ -32,12 +32,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Random;
 import java.util.Map;
 
+import org.apache.commons.lang.math.RandomUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.UnsupportedFileSystemException;
@@ -94,17 +93,13 @@ public class DefaultContainerExecutor extends ContainerExecutor {
   }
 
   @Override
-  public synchronized void startLocalizer(Path nmPrivateContainerTokensPath,
+  public void startLocalizer(Path nmPrivateContainerTokensPath,
       InetSocketAddress nmAddr, String user, String appId, String locId,
       LocalDirsHandlerService dirsHandler)
       throws IOException, InterruptedException {
 
     List<String> localDirs = dirsHandler.getLocalDirs();
     List<String> logDirs = dirsHandler.getLogDirs();
-    
-    ContainerLocalizer localizer =
-        new ContainerLocalizer(lfs, user, appId, locId, getPaths(localDirs),
-            RecordFactoryProvider.getRecordFactory(getConf()));
     
     createUserLocalDirs(localDirs, user);
     createUserCacheDirs(localDirs, user);
@@ -118,8 +113,17 @@ public class DefaultContainerExecutor extends ContainerExecutor {
     Path tokenDst = new Path(appStorageDir, tokenFn);
     copyFile(nmPrivateContainerTokensPath, tokenDst, user);
     LOG.info("Copying from " + nmPrivateContainerTokensPath + " to " + tokenDst);
-    lfs.setWorkingDirectory(appStorageDir);
-    LOG.info("CWD set to " + appStorageDir + " = " + lfs.getWorkingDirectory());
+
+
+    FileContext localizerFc = FileContext.getFileContext(
+        lfs.getDefaultFileSystem(), getConf());
+    localizerFc.setUMask(lfs.getUMask());
+    localizerFc.setWorkingDirectory(appStorageDir);
+    LOG.info("Localizer CWD set to " + appStorageDir + " = " 
+        + localizerFc.getWorkingDirectory());
+    ContainerLocalizer localizer =
+        new ContainerLocalizer(localizerFc, user, appId, locId, 
+            getPaths(localDirs), RecordFactoryProvider.getRecordFactory(getConf()));
     // TODO: DO it over RPC for maintaining similarity?
     localizer.runLocalization(nmAddr);
   }
@@ -287,7 +291,7 @@ public class DefaultContainerExecutor extends ContainerExecutor {
 
       try {
         out = lfs.create(wrapperScriptPath, EnumSet.of(CREATE, OVERWRITE));
-        pout = new PrintStream(out);
+        pout = new PrintStream(out, false, "UTF-8");
         writeLocalWrapperScript(launchDst, pidFile, pout);
       } finally {
         IOUtils.cleanup(LOG, pout, out);
@@ -340,7 +344,7 @@ public class DefaultContainerExecutor extends ContainerExecutor {
       PrintStream pout = null;
       try {
         out = lfs.create(sessionScriptPath, EnumSet.of(CREATE, OVERWRITE));
-        pout = new PrintStream(out);
+        pout = new PrintStream(out, false, "UTF-8");
         // We need to do a move as writing to a file is not atomic
         // Process reading a file being written to may get garbled data
         // hence write pid to tmp file first followed by a mv
@@ -534,8 +538,7 @@ public class DefaultContainerExecutor extends ContainerExecutor {
 
     // make probability to pick a directory proportional to
     // the available space on the directory.
-    Random r = new Random();
-    long randomPosition = Math.abs(r.nextLong()) % totalAvailable;
+    long randomPosition = RandomUtils.nextLong() % totalAvailable;
     int dir = 0;
     // skip zero available space directory,
     // because totalAvailable is greater than 0 and randomPosition

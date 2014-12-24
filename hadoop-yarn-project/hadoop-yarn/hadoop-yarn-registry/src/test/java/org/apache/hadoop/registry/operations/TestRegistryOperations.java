@@ -23,6 +23,7 @@ import org.apache.hadoop.fs.PathIsNotEmptyDirectoryException;
 import org.apache.hadoop.fs.PathNotFoundException;
 import org.apache.hadoop.registry.AbstractRegistryTest;
 import org.apache.hadoop.registry.client.api.BindFlags;
+import org.apache.hadoop.registry.client.binding.RegistryTypeUtils;
 import org.apache.hadoop.registry.client.binding.RegistryUtils;
 import org.apache.hadoop.registry.client.binding.RegistryPathUtils;
 import org.apache.hadoop.registry.client.exceptions.NoRecordException;
@@ -91,10 +92,8 @@ public class TestRegistryOperations extends AbstractRegistryTest {
             childStats.values());
     assertEquals(1, records.size());
     ServiceRecord record = records.get(ENTRY_PATH);
-    assertNotNull(record);
-    record.validate();
+    RegistryTypeUtils.validateServiceRecord(ENTRY_PATH, record);
     assertMatches(written, record);
-
   }
 
   @Test
@@ -300,5 +299,33 @@ public class TestRegistryOperations extends AbstractRegistryTest {
     assertEquals("Wrong no. of children", 2, stats.size());
     assertEquals(r1stat, stats.get("r1"));
     assertEquals(r2stat, stats.get("r2"));
+  }
+
+
+  @Test
+  public void testComplexUsernames() throws Throwable {
+    operations.mknode("/users/user with spaces", true);
+    operations.mknode("/users/user-with_underscores", true);
+    operations.mknode("/users/000000", true);
+    operations.mknode("/users/-storm", true);
+    operations.mknode("/users/windows\\ user", true);
+    String home = RegistryUtils.homePathForUser("\u0413PA\u0414_3");
+    operations.mknode(home, true);
+    operations.mknode(
+        RegistryUtils.servicePath(home, "service.class", "service 4_5"),
+        true);
+
+    operations.mknode(
+        RegistryUtils.homePathForUser("hbase@HADOOP.APACHE.ORG"),
+        true);
+    operations.mknode(
+        RegistryUtils.homePathForUser("hbase/localhost@HADOOP.APACHE.ORG"),
+        true);
+    home = RegistryUtils.homePathForUser("ADMINISTRATOR/127.0.0.1");
+    assertTrue("No 'administrator' in " + home, home.contains("administrator"));
+    operations.mknode(
+        home,
+        true);
+
   }
 }

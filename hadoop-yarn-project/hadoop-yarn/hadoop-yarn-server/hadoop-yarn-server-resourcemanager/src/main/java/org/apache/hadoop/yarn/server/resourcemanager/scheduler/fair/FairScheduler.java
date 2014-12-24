@@ -305,6 +305,7 @@ public class FairScheduler extends
     // Recursively compute fair shares for all queues
     // and update metrics
     rootQueue.recomputeShares();
+    updateRootQueueMetrics();
 
     if (LOG.isDebugEnabled()) {
       if (--updatesToSkipForDebug < 0) {
@@ -399,9 +400,7 @@ public class FairScheduler extends
     try {
       // Reset preemptedResource for each app
       for (FSLeafQueue queue : getQueueManager().getLeafQueues()) {
-        for (FSAppAttempt app : queue.getRunnableAppSchedulables()) {
-          app.resetPreemptedResources();
-        }
+        queue.resetPreemptedResources();
       }
 
       while (Resources.greaterThan(RESOURCE_CALCULATOR, clusterResource,
@@ -420,9 +419,7 @@ public class FairScheduler extends
     } finally {
       // Clear preemptedResources for each app
       for (FSLeafQueue queue : getQueueManager().getLeafQueues()) {
-        for (FSAppAttempt app : queue.getRunnableAppSchedulables()) {
-          app.clearPreemptedResources();
-        }
+        queue.clearPreemptedResources();
       }
     }
 
@@ -578,6 +575,17 @@ public class FairScheduler extends
     if (queueName == null || queueName.isEmpty()) {
       String message = "Reject application " + applicationId +
               " submitted by user " + user + " with an empty queue name.";
+      LOG.info(message);
+      rmContext.getDispatcher().getEventHandler()
+          .handle(new RMAppRejectedEvent(applicationId, message));
+      return;
+    }
+
+    if (queueName.startsWith(".") || queueName.endsWith(".")) {
+      String message = "Reject application " + applicationId
+          + " submitted by user " + user + " with an illegal queue name "
+          + queueName + ". "
+          + "The queue name cannot start/end with period.";
       LOG.info(message);
       rmContext.getDispatcher().getEventHandler()
           .handle(new RMAppRejectedEvent(applicationId, message));
@@ -816,9 +824,11 @@ public class FairScheduler extends
   }
 
   private synchronized void addNode(RMNode node) {
-    nodes.put(node.getNodeID(), new FSSchedulerNode(node, usePortForNodeName));
+    FSSchedulerNode schedulerNode = new FSSchedulerNode(node, usePortForNodeName);
+    nodes.put(node.getNodeID(), schedulerNode);
     Resources.addTo(clusterResource, node.getTotalCapability());
     updateRootQueueMetrics();
+    updateMaximumAllocation(schedulerNode, true);
 
     queueMgr.getRootQueue().setSteadyFairShare(clusterResource);
     queueMgr.getRootQueue().recomputeSteadyShares();
@@ -858,6 +868,7 @@ public class FairScheduler extends
     nodes.remove(rmNode.getNodeID());
     queueMgr.getRootQueue().setSteadyFairShare(clusterResource);
     queueMgr.getRootQueue().recomputeSteadyShares();
+    updateMaximumAllocation(node, false);
     LOG.info("Removed node " + rmNode.getNodeAddress() +
         " cluster capacity: " + clusterResource);
   }
@@ -876,7 +887,8 @@ public class FairScheduler extends
 
     // Sanity check
     SchedulerUtils.normalizeRequests(ask, new DominantResourceCalculator(),
-        clusterResource, minimumAllocation, maximumAllocation, incrAllocation);
+        clusterResource, minimumAllocation, getMaximumResourceCapability(),
+        incrAllocation);
 
     // Set amResource for this app
     if (!application.getUnmanagedAM() && ask.size() == 1
@@ -1028,7 +1040,10 @@ public class FairScheduler extends
     FSAppAttempt reservedAppSchedulable = node.getReservedAppSchedulable();
     if (reservedAppSchedulable != null) {
       Priority reservedPriority = node.getReservedContainer().getReservedPriority();
-      if (!reservedAppSchedulable.hasContainerForNode(reservedPriority, node)) {
+      FSQueue queue = reservedAppSchedulable.getQueue();
+
+      if (!reservedAppSchedulable.hasContainerForNode(reservedPriority, node)
+          || !fitInMaxShare(queue)) {
         // Don't hold the reservation if app can no longer use it
         LOG.info("Releasing reservation that cannot be satisfied for application "
             + reservedAppSchedulable.getApplicationAttemptId()
@@ -1042,7 +1057,6 @@ public class FairScheduler extends
               + reservedAppSchedulable.getApplicationAttemptId()
               + " on node: " + node);
         }
-        
         node.getReservedAppSchedulable().assignReservedContainer(node);
       }
     }
@@ -1062,6 +1076,18 @@ public class FairScheduler extends
       }
     }
     updateRootQueueMetrics();
+  }
+
+  private boolean fitInMaxShare(FSQueue queue) {
+    if (Resources.fitsIn(queue.getResourceUsage(), queue.getMaxShare())) {
+      return false;
+    }
+    
+    FSQueue parentQueue = queue.getParent();
+    if (parentQueue != null) {
+      return fitInMaxShare(parentQueue);
+    }
+    return true;
   }
 
   public FSAppAttempt getSchedulerApp(ApplicationAttemptId appAttemptId) {
@@ -1210,7 +1236,7 @@ public class FairScheduler extends
       this.conf = new FairSchedulerConfiguration(conf);
       validateConf(this.conf);
       minimumAllocation = this.conf.getMinimumAllocation();
-      maximumAllocation = this.conf.getMaximumAllocation();
+      initMaximumResourceCapability(this.conf.getMaximumAllocation());
       incrAllocation = this.conf.getIncrementAllocation();
       continuousSchedulingEnabled = this.conf.isContinuousSchedulingEnabled();
       continuousSchedulingSleepMs =
@@ -1423,7 +1449,7 @@ public class FairScheduler extends
         return oldQueue.getQueueName();
       }
       
-      if (oldQueue.getRunnableAppSchedulables().contains(attempt)) {
+      if (oldQueue.isRunnableApp(attempt)) {
         verifyMoveDoesNotViolateConstraints(attempt, oldQueue, targetQueue);
       }
       
@@ -1537,5 +1563,17 @@ public class FairScheduler extends
   public EnumSet<SchedulerResourceTypes> getSchedulingResourceTypes() {
     return EnumSet
       .of(SchedulerResourceTypes.MEMORY, SchedulerResourceTypes.CPU);
+  }
+
+  @Override
+  public Set<String> getPlanQueues() throws YarnException {
+    Set<String> planQueues = new HashSet<String>();
+    for (FSQueue fsQueue : queueMgr.getQueues()) {
+      String queueName = fsQueue.getName();
+      if (allocConf.isReservable(queueName)) {
+        planQueues.add(queueName);
+      }
+    }
+    return planQueues;
   }
 }

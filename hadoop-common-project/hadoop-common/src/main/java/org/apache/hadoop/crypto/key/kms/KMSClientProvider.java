@@ -18,6 +18,7 @@
 package org.apache.hadoop.crypto.key.kms;
 
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.io.Charsets;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.key.KeyProvider;
@@ -80,6 +81,8 @@ import com.google.common.base.Preconditions;
 @InterfaceAudience.Private
 public class KMSClientProvider extends KeyProvider implements CryptoExtension,
     KeyProviderDelegationTokenExtension.DelegationTokenExtension {
+
+  private static final String INVALID_SIGNATURE = "Invalid signature";
 
   private static final String ANONYMOUS_REQUESTS_DISALLOWED = "Anonymous requests are disallowed";
 
@@ -207,7 +210,7 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
   }
 
   private static void writeJson(Map map, OutputStream os) throws IOException {
-    Writer writer = new OutputStreamWriter(os);
+    Writer writer = new OutputStreamWriter(os, Charsets.UTF_8);
     ObjectMapper jsonMapper = new ObjectMapper();
     jsonMapper.writerWithDefaultPrettyPrinter().writeValue(writer, map);
   }
@@ -453,7 +456,8 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
       throw ex;
     }
     if ((conn.getResponseCode() == HttpURLConnection.HTTP_FORBIDDEN
-        && conn.getResponseMessage().equals(ANONYMOUS_REQUESTS_DISALLOWED))
+        && (conn.getResponseMessage().equals(ANONYMOUS_REQUESTS_DISALLOWED) ||
+            conn.getResponseMessage().contains(INVALID_SIGNATURE)))
         || conn.getResponseCode() == HttpURLConnection.HTTP_UNAUTHORIZED) {
       // Ideally, this should happen only when there is an Authentication
       // failure. Unfortunately, the AuthenticationFilter returns 403 when it
@@ -824,6 +828,10 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
       encKeyVersionQueue.shutdown();
     } catch (Exception e) {
       throw new IOException(e);
+    } finally {
+      if (sslFactory != null) {
+        sslFactory.destroy();
+      }
     }
   }
 }

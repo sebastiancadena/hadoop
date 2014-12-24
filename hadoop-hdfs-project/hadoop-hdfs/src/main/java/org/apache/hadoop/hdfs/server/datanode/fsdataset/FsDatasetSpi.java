@@ -18,8 +18,10 @@
 package org.apache.hadoop.hdfs.server.datanode.fsdataset;
 
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
@@ -35,17 +37,22 @@ import org.apache.hadoop.hdfs.protocol.BlockListAsLongs;
 import org.apache.hadoop.hdfs.protocol.BlockLocalPathInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsBlocksMetadata;
+import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.ReplicaState;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.DataStorage;
 import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
 import org.apache.hadoop.hdfs.server.datanode.Replica;
 import org.apache.hadoop.hdfs.server.datanode.ReplicaInPipelineInterface;
+import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
+import org.apache.hadoop.hdfs.server.datanode.ReplicaNotFoundException;
 import org.apache.hadoop.hdfs.server.datanode.StorageLocation;
+import org.apache.hadoop.hdfs.server.datanode.UnexpectedReplicaStateException;
 import org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetFactory;
 import org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsVolumeImpl;
 import org.apache.hadoop.hdfs.server.datanode.metrics.FSDatasetMBean;
 import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringBlock;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.ReplicaRecoveryInfo;
 import org.apache.hadoop.hdfs.server.protocol.StorageReport;
 import org.apache.hadoop.util.DiskChecker.DiskErrorException;
@@ -95,8 +102,9 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   public List<V> getVolumes();
 
   /** Add an array of StorageLocation to FsDataset. */
-  public List<StorageLocation> addVolumes(List<StorageLocation> volumes,
-      final Collection<String> bpids);
+  public void addVolume(
+      final StorageLocation location,
+      final List<NamespaceInfo> nsInfos) throws IOException;
 
   /** Removes a collection of volumes from FsDataset. */
   public void removeVolumes(Collection<StorageLocation> volumes);
@@ -299,6 +307,29 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   public boolean contains(ExtendedBlock block);
 
   /**
+   * Check if a block is valid.
+   *
+   * @param b           The block to check.
+   * @param minLength   The minimum length that the block must have.  May be 0.
+   * @param state       If this is null, it is ignored.  If it is non-null, we
+   *                        will check that the replica has this state.
+   *
+   * @throws ReplicaNotFoundException          If the replica is not found
+   *
+   * @throws UnexpectedReplicaStateException   If the replica is not in the 
+   *                                             expected state.
+   * @throws FileNotFoundException             If the block file is not found or there 
+   *                                              was an error locating it.
+   * @throws EOFException                      If the replica length is too short.
+   * 
+   * @throws IOException                       May be thrown from the methods called. 
+   */
+  public void checkBlock(ExtendedBlock b, long minLength, ReplicaState state)
+      throws ReplicaNotFoundException, UnexpectedReplicaStateException,
+      FileNotFoundException, EOFException, IOException;
+      
+  
+  /**
    * Is the block valid?
    * @return - true if the specified block is valid
    */
@@ -478,4 +509,10 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
     * Callback from RamDiskAsyncLazyPersistService upon async lazy persist task fail
     */
    public void onFailLazyPersist(String bpId, long blockId);
+
+    /**
+     * Move block from one storage to another storage
+     */
+    public ReplicaInfo moveBlockAcrossStorage(final ExtendedBlock block,
+        StorageType targetStorageType) throws IOException;
 }

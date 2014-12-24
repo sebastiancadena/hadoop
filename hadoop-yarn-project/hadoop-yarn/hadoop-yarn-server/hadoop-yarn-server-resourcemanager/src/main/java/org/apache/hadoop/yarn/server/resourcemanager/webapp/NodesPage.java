@@ -28,7 +28,6 @@ import java.util.Collection;
 
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.yarn.api.records.NodeState;
-import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
@@ -46,14 +45,12 @@ import com.google.inject.Inject;
 class NodesPage extends RmView {
 
   static class NodesBlock extends HtmlBlock {
-    final RMContext rmContext;
     final ResourceManager rm;
     private static final long BYTES_IN_MB = 1024 * 1024;
 
     @Inject
-    NodesBlock(RMContext context, ResourceManager rm, ViewContext ctx) {
+    NodesBlock(ResourceManager rm, ViewContext ctx) {
       super(ctx);
-      this.rmContext = context;
       this.rm = rm;
     }
 
@@ -66,6 +63,7 @@ class NodesPage extends RmView {
       TBODY<TABLE<Hamlet>> tbody = html.table("#nodes").
           thead().
           tr().
+          th(".nodelabels", "Node Labels").
           th(".rack", "Rack").
           th(".state", "Node State").
           th(".nodeaddress", "Node Address").
@@ -84,14 +82,14 @@ class NodesPage extends RmView {
       if(type != null && !type.isEmpty()) {
         stateFilter = NodeState.valueOf(type.toUpperCase());
       }
-      Collection<RMNode> rmNodes = this.rmContext.getRMNodes().values();
+      Collection<RMNode> rmNodes = this.rm.getRMContext().getRMNodes().values();
       boolean isInactive = false;
       if (stateFilter != null) {
         switch (stateFilter) {
         case DECOMMISSIONED:
         case LOST:
         case REBOOTED:
-          rmNodes = this.rmContext.getInactiveRMNodes().values();
+          rmNodes = this.rm.getRMContext().getInactiveRMNodes().values();
           isInactive = true;
           break;
         }
@@ -113,6 +111,7 @@ class NodesPage extends RmView {
         int usedMemory = (int)info.getUsedMemory();
         int availableMemory = (int)info.getAvailableMemory();
         TR<TBODY<TABLE<Hamlet>>> row = tbody.tr().
+            td(StringUtils.join(",", info.getNodeLabels())).
             td(info.getRack()).
             td(info.getState()).
             td(info.getNodeId());

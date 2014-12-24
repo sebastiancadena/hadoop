@@ -25,6 +25,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -153,7 +154,7 @@ public class NativeAzureFileSystem extends FileSystem {
             "Error reading pending rename file contents -- "
                 + "maximum file size exceeded");
       }
-      String contents = new String(bytes, 0, l);
+      String contents = new String(bytes, 0, l, Charset.forName("UTF-8"));
 
       // parse the JSON
       ObjectMapper objMapper = new ObjectMapper();
@@ -253,7 +254,7 @@ public class NativeAzureFileSystem extends FileSystem {
       // Write file.
       try {
         output = fs.create(path);
-        output.write(contents.getBytes());
+        output.write(contents.getBytes(Charset.forName("UTF-8")));
       } catch (IOException e) {
         throw new IOException("Unable to write RenamePending file for folder rename from "
             + srcKey + " to " + dstKey, e);
@@ -640,6 +641,8 @@ public class NativeAzureFileSystem extends FileSystem {
       "fs.azure.ring.buffer.capacity";
   static final String AZURE_OUTPUT_STREAM_BUFFER_SIZE_PROPERTY_NAME =
       "fs.azure.output.stream.buffer.size";
+
+  public static final String SKIP_AZURE_METRICS_PROPERTY_NAME = "fs.azure.skip.metrics";
 
   private class NativeAzureFsInputStream extends FSInputStream {
     private InputStream in;
@@ -1035,13 +1038,15 @@ public class NativeAzureFileSystem extends FileSystem {
       store = createDefaultStore(conf);
     }
 
-    // Make sure the metrics system is available before interacting with Azure
-    AzureFileSystemMetricsSystem.fileSystemStarted();
-    metricsSourceName = newMetricsSourceName();
-    String sourceDesc = "Azure Storage Volume File System metrics";
     instrumentation = new AzureFileSystemInstrumentation(conf);
-    AzureFileSystemMetricsSystem.registerSource(metricsSourceName, sourceDesc,
+    if(!conf.getBoolean(SKIP_AZURE_METRICS_PROPERTY_NAME, false)) {
+      // Make sure the metrics system is available before interacting with Azure
+      AzureFileSystemMetricsSystem.fileSystemStarted();
+      metricsSourceName = newMetricsSourceName();
+      String sourceDesc = "Azure Storage Volume File System metrics";
+      AzureFileSystemMetricsSystem.registerSource(metricsSourceName, sourceDesc,
         instrumentation);
+    }
 
     store.initialize(uri, conf, instrumentation);
     setConf(conf);
@@ -2207,8 +2212,10 @@ public class NativeAzureFileSystem extends FileSystem {
 
     long startTime = System.currentTimeMillis();
 
-    AzureFileSystemMetricsSystem.unregisterSource(metricsSourceName);
-    AzureFileSystemMetricsSystem.fileSystemClosed();
+    if(!getConf().getBoolean(SKIP_AZURE_METRICS_PROPERTY_NAME, false)) {
+      AzureFileSystemMetricsSystem.unregisterSource(metricsSourceName);
+      AzureFileSystemMetricsSystem.fileSystemClosed();
+    }
 
     if (LOG.isDebugEnabled()) {
         LOG.debug("Submitting metrics when file system closed took "

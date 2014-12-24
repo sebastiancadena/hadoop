@@ -81,7 +81,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.amlauncher.AMLauncherEventT
 import org.apache.hadoop.yarn.server.resourcemanager.amlauncher.ApplicationMasterLauncher;
 import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
 import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
-import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore.ApplicationAttemptState;
+import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationAttemptStateData;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEventType;
@@ -1395,7 +1395,7 @@ public class TestRMAppAttemptTransitions {
     // failed attempt captured the container finished event.
     assertEquals(0, applicationAttempt.getJustFinishedContainers().size());
     ContainerStatus cs2 =
-        ContainerStatus.newInstance(ContainerId.newInstance(appAttemptId, 2),
+        ContainerStatus.newInstance(ContainerId.newContainerId(appAttemptId, 2),
           ContainerState.COMPLETE, "", 0);
     applicationAttempt.handle(new RMAppAttemptContainerFinishedEvent(
       appAttemptId, cs2, anyNodeId));
@@ -1520,7 +1520,7 @@ public class TestRMAppAttemptTransitions {
 
   private void verifyAttemptFinalStateSaved() {
     verify(store, times(1)).updateApplicationAttemptState(
-      any(ApplicationAttemptState.class));
+      any(ApplicationAttemptStateData.class));
   }
 
   private void verifyAMHostAndPortInvalidated() {

@@ -71,6 +71,7 @@ import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.Cont
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.ContainerState;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ContainerLocalizer;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ResourceLocalizationService;
+import org.apache.hadoop.yarn.server.nodemanager.WindowsSecureContainerExecutor;
 import org.apache.hadoop.yarn.server.nodemanager.util.ProcessIdFileReader;
 import org.apache.hadoop.yarn.util.Apps;
 import org.apache.hadoop.yarn.util.AuxiliaryServiceHelper;
@@ -268,7 +269,7 @@ public class ContainerLaunch implements Callable<Integer> {
           localResources, nmPrivateClasspathJarDir);
         
         // Write out the environment
-        writeLaunchEnv(containerScriptOutStream, environment, localResources,
+        exec.writeLaunchEnv(containerScriptOutStream, environment, localResources,
             launchContext.getCommands());
         
         // /////////// End of writing out container-script
@@ -461,9 +462,8 @@ public class ContainerLaunch implements Callable<Integer> {
     final int sleepInterval = 100;
 
     // loop waiting for pid file to show up 
-    // until either the completed flag is set which means something bad 
-    // happened or our timer expires in which case we admit defeat
-    while (!completed.get()) {
+    // until our timer expires in which case we admit defeat
+    while (true) {
       processId = ProcessIdFileReader.getProcessId(pidFilePath);
       if (processId != null) {
         LOG.debug("Got pid " + processId + " for container "
@@ -502,8 +502,7 @@ public class ContainerLaunch implements Callable<Integer> {
     return context;
   }
 
-  @VisibleForTesting
-  static abstract class ShellScriptBuilder {
+  public static abstract class ShellScriptBuilder {
     public static ShellScriptBuilder create() {
       return Shell.WINDOWS ? new WindowsShellScriptBuilder() :
         new UnixShellScriptBuilder();
@@ -768,8 +767,17 @@ public class ContainerLaunch implements Callable<Integer> {
           System.getenv());
         mergedEnv.putAll(environment);
         
+        // this is hacky and temporary - it's to preserve the windows secure
+        // behavior but enable non-secure windows to properly build the class
+        // path for access to job.jar/lib/xyz and friends (see YARN-2803)
+        Path jarDir;
+        if (exec instanceof WindowsSecureContainerExecutor) {
+          jarDir = nmPrivateClasspathJarDir;
+        } else {
+          jarDir = pwd; 
+        }
         String[] jarCp = FileUtil.createJarWithClassPath(
-          newClassPath.toString(), nmPrivateClasspathJarDir, pwd, mergedEnv);
+          newClassPath.toString(), jarDir, pwd, mergedEnv);
         // In a secure cluster the classpath jar must be localized to grant access
         Path localizedClassPathJar = exec.localizeClasspathJar(
             new Path(jarCp[0]), pwd, container.getUser());
@@ -782,37 +790,6 @@ public class ContainerLaunch implements Callable<Integer> {
         .getAuxServiceMetaData().entrySet()) {
       AuxiliaryServiceHelper.setServiceDataIntoEnv(
           meta.getKey(), meta.getValue(), environment);
-    }
-  }
-    
-  static void writeLaunchEnv(OutputStream out,
-      Map<String,String> environment, Map<Path,List<String>> resources,
-      List<String> command)
-      throws IOException {
-    ShellScriptBuilder sb = ShellScriptBuilder.create();
-    if (environment != null) {
-      for (Map.Entry<String,String> env : environment.entrySet()) {
-        sb.env(env.getKey().toString(), env.getValue().toString());
-      }
-    }
-    if (resources != null) {
-      for (Map.Entry<Path,List<String>> entry : resources.entrySet()) {
-        for (String linkName : entry.getValue()) {
-          sb.symlink(entry.getKey(), new Path(linkName));
-        }
-      }
-    }
-
-    sb.command(command);
-
-    PrintStream pout = null;
-    try {
-      pout = new PrintStream(out);
-      sb.write(pout);
-    } finally {
-      if (out != null) {
-        out.close();
-      }
     }
   }
 
